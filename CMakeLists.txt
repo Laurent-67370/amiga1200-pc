@@ -18,11 +18,12 @@ set(IMGUI ${CMAKE_SOURCE_DIR}/third_party/imgui)
 if(WIN32)
   # Icône et informations de l'exécutable (amiga1200.ico est fabriquée par scripts/package-windows.sh)
   set(WIN_RC ${CMAKE_BINARY_DIR}/amiga1200.rc)
-  file(WRITE ${WIN_RC} "1 ICON \"${CMAKE_BINARY_DIR}/amiga1200.ico\"\n")
+  # et manifeste (écrans haute résolution, chemins en UTF-8)
+  file(WRITE ${WIN_RC} "1 ICON \"${CMAKE_BINARY_DIR}/amiga1200.ico\"\n1 24 \"${CMAKE_SOURCE_DIR}/app/amiga1200.manifest\"\n")
 endif()
 add_executable(amiga1200 ${WIN_RC}
   app/src/main.cpp app/src/home.cpp app/src/emu.cpp app/src/store.cpp app/src/config.cpp app/src/kickstarts.cpp
-  app/src/platform.cpp app/src/ui.cpp app/src/crash.cpp app/src/library.cpp app/src/zip.cpp app/src/extras.cpp app/src/blankdisk.cpp app/src/midi.cpp app/src/padkeys.cpp
+  app/src/platform.cpp app/src/ui.cpp app/src/crash.cpp app/src/library.cpp app/src/zip.cpp app/src/extras.cpp app/src/blankdisk.cpp app/src/midi.cpp app/src/padkeys.cpp app/src/browser.cpp
   ${IMGUI}/imgui.cpp ${IMGUI}/imgui_draw.cpp ${IMGUI}/imgui_tables.cpp ${IMGUI}/imgui_widgets.cpp
   ${IMGUI}/backends/imgui_impl_sdl2.cpp ${IMGUI}/backends/imgui_impl_sdlrenderer2.cpp)
 target_include_directories(amiga1200 PRIVATE app/src native ${IMGUI} ${IMGUI}/backends third_party/stb)
@@ -37,9 +38,9 @@ endif()
 # Le cœur est en C++ : bibliothèque statique liée tout entière (ses objets s'enregistrent eux-mêmes)
 if(WIN32)
   target_link_libraries(amiga1200 PRIVATE -Wl,--whole-archive ${CORE_DIR}/libcore.a -Wl,--no-whole-archive
-    ${SDL_LIBS} z winmm iconv ws2_32 iphlpapi gdi32 setupapi imm32 version ole32 oleaut32 uuid comdlg32 shell32 -static -static-libgcc -static-libstdc++ -lpthread)
+    ${SDL_LIBS} z winmm iconv ws2_32 iphlpapi gdi32 setupapi imm32 version ole32 oleaut32 uuid comdlg32 shell32 dbghelp -static -static-libgcc -static-libstdc++ -lpthread)
   set_target_properties(amiga1200 PROPERTIES WIN32_EXECUTABLE ON)
 else()
   target_link_libraries(amiga1200 PRIVATE -Wl,--whole-archive ${CORE_DIR}/libcore.a -Wl,--no-whole-archive
-    ${SDL_LIBS} z dl m pthread util -static-libstdc++ -static-libgcc)
+    ${SDL_LIBS} z dl m pthread util -static-libstdc++ -static-libgcc -rdynamic)
 endif()

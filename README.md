@@ -20,9 +20,11 @@ Ouvrez la page **[Releases → dev](https://github.com/laurent-67370/amiga1200-p
 - **Windows 10 ou 11** : téléchargez `amiga1200-windows-x64.zip`, décompressez-le, lancez `Amiga1200\Amiga1200.exe`.
   Windows peut avertir (application non signée) : « Informations complémentaires » puis « Exécuter quand même ».
 - **Linux** (Ubuntu 22.04 ou plus récent, Debian 12, Fedora…) : téléchargez `amiga1200-linux-x86_64.AppImage`, rendez-le
-  exécutable (`chmod +x amiga1200-linux-x86_64.AppImage`, ou Propriétés → Autoriser l'exécution) et lancez-le. Pour
-  choisir des fichiers, il faut `zenity` (GNOME et la plupart des bureaux) ou `kdialog` (KDE) ; on peut aussi les
-  glisser sur la fenêtre.
+  exécutable (`chmod +x amiga1200-linux-x86_64.AppImage`, ou Propriétés → Autoriser l'exécution) et lancez-le. Les
+  fenêtres de choix de fichiers sont celles du bureau (`zenity` ou `kdialog`), sinon celle de l'application.
+
+Carte **Raccourcis** de l'accueil : « Amiga 1200 » dans le menu Démarrer et sur le bureau (Windows), ou dans le menu des
+applications (Linux).
 
 ## Ce que fait l'application
 
@@ -58,7 +60,10 @@ Ouvrez la page **[Releases → dev](https://github.com/laurent-67370/amiga1200-p
   Ctrl+K capture, Ctrl+T turbo, Ctrl+Q quitter le jeu WHDLoad (F10, * ou Échap au choix), Ctrl+R réinitialiser,
   F11 plein écran. Les messages s'affichent dans une bulle sur l'image.
 - **Clavier** : touches physiques (AZERTY ou QWERTY indifféremment) ; Windows ou Page préc./suiv. = touches Amiga,
-  Inser = Help, Début/Fin = parenthèses du pavé numérique.
+  Inser = Help, Début/Fin = parenthèses du pavé numérique. Souris capturée, le clavier l'est aussi : la touche Windows
+  n'ouvre pas le menu Démarrer.
+- **Écrans haute résolution** sous Windows : l'application dessine à la taille réelle (police nette), chaque écran à
+  son échelle.
 - **Manettes** (Xbox, PlayStation, Switch… par SDL) : la première joue sur le port joystick, la deuxième sur le port
   souris ; **touches de la manette par jeu** (X, Y, L1, R1, L2, R2, Menu… changés en touches du clavier Amiga).
 - **Image** : lisse, nette ou écran cathodique (lignes de balayage), pixels réguliers, 4:3 ou toute la fenêtre, et
@@ -66,8 +71,8 @@ Ouvrez la page **[Releases → dev](https://github.com/laurent-67370/amiga1200-p
 - **MIDI** : l'Amiga joue sur un synthétiseur (USB, synthé de Windows, FluidSynth ou TiMidity sous Linux), un clavier
   MIDI joue sur l'Amiga (Bars & Pipes, Music-X, OctaMED…). Windows : winmm ; Linux : séquenceur ALSA.
 - **Son** par SDL, l'émulation cadencée par le son (comme les autres versions) ; vitesse affichée dans le titre.
-- **Rapport de plantage** : si l'émulation s'arrête brutalement, l'accueil prépare un rapport (fin du journal) à
-  copier, ouvrir ou signaler sur GitHub.
+- **Rapport de plantage** : si l'émulation s'arrête brutalement, l'accueil prépare un rapport (fin du journal et pile
+  d'appels du plantage ; sous Windows, un minidump en plus) à copier, ouvrir ou signaler sur GitHub.
 
 Dossiers : réglages, ROM et sauvegardes dans `~/.local/share/Amiga1200` (Linux) ou `%APPDATA%\Amiga1200` (Windows) ;
 volume SHARED: dans `Documents/Amiga1200/SHARED`.

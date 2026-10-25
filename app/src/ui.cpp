@@ -13,16 +13,37 @@ float displayScale(SDL_Window *w) {
     SDL_GetWindowSize(w, &ww, &wh);
     SDL_GetRendererOutputSize(SDL_GetRenderer(w), &pw, &ph);
     float s = ww > 0 ? (float)pw / ww : 1;
+#ifdef _WIN32
+    // Windows (application déclarée « DPI aware ») : la fenêtre est en pixels réels, l'échelle vient du DPI de l'écran
     if (s <= 1.01f) {
         float dpi = 0;
         if (SDL_GetDisplayDPI(SDL_GetWindowDisplayIndex(w), &dpi, nullptr, nullptr) == 0 && dpi > 110) s = dpi / 96.0f;
     }
+#endif
     return s < 1 ? 1 : s > 3 ? 3 : s;
 }
 
-void init(SDL_Window *w, SDL_Renderer *r, float scale) {
-    IMGUI_CHECKVERSION();
-    ImGui::CreateContext();
+float screenScale() {
+#ifdef _WIN32
+    float dpi = 0;
+    if (SDL_GetDisplayDPI(0, &dpi, nullptr, nullptr) == 0 && dpi > 110) {
+        float s = dpi / 96.0f;
+        return s > 3 ? 3 : s;
+    }
+#endif
+    // Linux et macOS : le système agrandit lui-même les fenêtres (pixels logiques)
+    return 1;
+}
+
+static SDL_Window *curWin;
+static SDL_Renderer *curRen;
+static float curScale = 1;
+static ImFont *savedBold, *savedTitle;
+
+// Contexte ImGui prêt à dessiner : police, couleurs, liaison à SDL
+static void setup(SDL_Window *w, SDL_Renderer *r, float scale) {
+    // CreateContext garde le contexte courant s'il y en a un : le nouveau est rendu courant explicitement
+    ImGui::SetCurrentContext(ImGui::CreateContext());
     ImGuiIO &io = ImGui::GetIO();
     io.IniFilename = nullptr;
     io.ConfigFlags |= ImGuiConfigFlags_NavEnableKeyboard | ImGuiConfigFlags_NavEnableGamepad;
@@ -73,6 +94,31 @@ void init(SDL_Window *w, SDL_Renderer *r, float scale) {
 
     ImGui_ImplSDL2_InitForSDLRenderer(w, r);
     ImGui_ImplSDLRenderer2_Init(r);
+}
+
+void init(SDL_Window *w, SDL_Renderer *r, float scale) {
+    IMGUI_CHECKVERSION();
+    curWin = w; curRen = r; curScale = scale;
+    setup(w, r, scale);
+    installBrowser();
+}
+
+// Fenêtre dessinée dans sa propre boucle, au milieu d'un cadre : un second contexte ImGui, le temps de cette boucle
+ImGuiContext *nestedBegin(SDL_Window *&w, SDL_Renderer *&r) {
+    ImGuiContext *prev = ImGui::GetCurrentContext();
+    w = curWin; r = curRen;
+    if (!w || !r) return nullptr;
+    // Polices du premier contexte, reprises au retour
+    savedBold = bold; savedTitle = title;
+    setup(w, r, curScale);
+    return prev;
+}
+void nestedEnd(ImGuiContext *prev) {
+    ImGui_ImplSDLRenderer2_Shutdown();
+    ImGui_ImplSDL2_Shutdown();
+    ImGui::DestroyContext();
+    ImGui::SetCurrentContext(prev);
+    bold = savedBold; title = savedTitle;
 }
 
 void shutdown() {

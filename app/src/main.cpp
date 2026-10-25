@@ -59,6 +59,10 @@ int main(int argc, char **argv) {
     };
     platform::initTimers();
     SDL_SetHint(SDL_HINT_APP_NAME, "Amiga 1200");
+    // Écrans haute résolution sous Windows : l'application dessine elle-même à la taille réelle (police nette)
+    SDL_SetHint(SDL_HINT_WINDOWS_DPI_AWARENESS, "permonitorv2");
+    // Touche Windows et raccourcis du système capturés quand la souris est capturée (voir l'émulation)
+    SDL_SetHint(SDL_HINT_GRAB_KEYBOARD, "1");
     if (has("--selftest")) {
         if (SDL_Init(SDL_INIT_TIMER) != 0) { printf("SDL : %s\n", SDL_GetError()); return 1; }
         std::string n = after("--selftest");

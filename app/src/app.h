@@ -12,6 +12,8 @@ std::string stateFile(const std::string &game, int slot);
 
 // Plantage de l'émulation : le processus note son numéro en démarrant et l'efface en quittant normalement
 void crashStarted();
+// Trace du système au moment d'un plantage (pile d'appels, et sous Windows un minidump), jointe au rapport
+void crashInstallHandler();
 void crashEnded();
 // Accueil : vrai si l'émulation s'est arrêtée brutalement ; report reçoit le rapport (fin du journal)
 bool crashCheck(std::string &report);

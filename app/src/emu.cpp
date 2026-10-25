@@ -102,11 +102,14 @@ struct Emu {
         if (captured) return;
         captured = true;
         SDL_SetRelativeMouseMode(SDL_TRUE);
+        // Clavier capturé lui aussi : la touche Windows (touche Amiga) n'ouvre plus le menu Démarrer, Alt+Tab reste à l'Amiga
+        SDL_SetWindowKeyboardGrab(win, SDL_TRUE);
     }
     void release() {
         if (!captured) return;
         captured = false;
         buttons = 0; amb_mouse_buttons(0);
+        SDL_SetWindowKeyboardGrab(win, SDL_FALSE);
         SDL_SetRelativeMouseMode(SDL_FALSE);
     }
 
@@ -482,8 +485,10 @@ struct Emu {
 
     int run() {
         crashStarted();
+        crashInstallHandler();
         SDL_SetHint(SDL_HINT_MOUSE_RELATIVE_MODE_WARP, "0");
-        win = SDL_CreateWindow("Amiga 1200 — démarrage…", SDL_WINDOWPOS_CENTERED, SDL_WINDOWPOS_CENTERED, 1024, 800,
+        float k = ui::screenScale();
+        win = SDL_CreateWindow("Amiga 1200 — démarrage…", SDL_WINDOWPOS_CENTERED, SDL_WINDOWPOS_CENTERED, (int)(1024 * k), (int)(800 * k),
                                SDL_WINDOW_RESIZABLE | SDL_WINDOW_ALLOW_HIGHDPI);
         if (!win) { platform::message("Démarrage impossible", SDL_GetError()); return 1; }
         SDL_SetWindowMinimumSize(win, 400, 300);
