@@ -8,11 +8,15 @@
 #include "blankdisk.h"
 #include "midi.h"
 #include "platform.h"
+#include "scan.h"
 #include "store.h"
 #include "ui.h"
 #include "imgui_impl_sdl2.h"
 #include <SDL.h>
 #include <algorithm>
+#include <atomic>
+#include <memory>
+#include <set>
 #include <ctime>
 #include <filesystem>
 #include <functional>
@@ -267,11 +271,132 @@ struct Home {
         if (ImGui::Button("Ajouter des fichiers…"))
             addFiles(platform::openFiles("Jeux WHDLoad (.lha, .zip), disquettes, disques durs (.hdf), CD ou Kickstart", true,
                                          {"Fichiers Amiga|*.lha;*.lzh;*.lzx;*.zip;*.adf;*.adz;*.dms;*.ipf;*.scp;*.hdf;*.hdz;*.iso;*.chd;*.cue;*.rom"}));
+        ImGui::SameLine();
+        if (ImGui::Button("Scanner un dossier…")) scanStart();
         if (working) { ImGui::SameLine(); ImGui::TextDisabled("Analyse des archives…"); }
         ui::note("Glissez aussi vos fichiers sur cette fenêtre. Un jeu WHDLoad se lance d'un clic ; les .zip sont analysés (disque dur ou jeu WHDLoad extraits, archive abîmée signalée) ; un Kickstart est installé comme ROM de la machine.");
     }
     std::string wantTab;
     void setTab(const std::string &k) { libKind = wantTab = k; }
+
+    // ---------- scanner un dossier : analyse à part, bilan à cocher, ajout ----------
+    int scanPhase = 0;   // 0 : fermé ; 1 : recherche et analyse ; 2 : bilan ; 3 : ajout
+    std::string scanDir;
+    std::vector<scan::Item> scanItems;
+    std::atomic<bool> scanStop{false};
+    std::atomic<int> scanCount{0}, scanAt{0}, scanTotal{0};
+    bool scanStopped = false;
+    std::set<std::string> scanBase;
+    void scanStart() {
+        std::string d = platform::openFolder("Dossier à scanner (Amiga Forever, clé USB, votre dossier Amiga…)");
+        if (d.empty()) return;
+        scanDir = paths::name(d);
+        if (scanDir.empty()) scanDir = d;
+        scanStop = false; scanCount = 0; scanAt = 0; scanTotal = 0; scanPhase = 1; scanItems.clear();
+        std::thread([this, d] {
+            auto items = std::make_shared<std::vector<scan::Item>>(scan::walk(d, scanStop, scanCount));
+            scanTotal = (int)items->size();
+            scan::classify(*items, scanStop, scanAt);
+            later([this, items] { scanItems = std::move(*items); scanStopped = scanStop; scanBase = scan::libTags(); scanPhase = 2; });
+        }).detach();
+    }
+    void scanImport() {
+        scanStop = false; scanAt = 0;
+        int n = 0;
+        for (auto &it : scanItems) if (!it.kind.empty() && it.on && it.why.empty()) n++;
+        scanTotal = n; scanPhase = 3;
+        std::thread([this] {
+            auto r = std::make_shared<scan::Report>(scan::importAll(scanItems, scanStop, scanAt));
+            later([this, r] {
+                std::string m = scan::apply(s, *r, scanStop);
+                scanPhase = 0; scanItems.clear();
+                refresh();
+                alert("Scan terminé", m);
+            });
+        }).detach();
+    }
+    void scanDraw() {
+        if (!scanPhase) return;
+        if (!ImGui::IsPopupOpen("##scan")) ImGui::OpenPopup("##scan");
+        ImGuiIO &io = ImGui::GetIO();
+        bool sum = scanPhase == 2;
+        ImGui::SetNextWindowSize(ImVec2(std::min(720 * scale, io.DisplaySize.x - 40), sum ? io.DisplaySize.y * 0.85f : 0));
+        ImGui::SetNextWindowPos(ImVec2(io.DisplaySize.x / 2, io.DisplaySize.y / 2), ImGuiCond_Always, ImVec2(0.5f, 0.5f));
+        if (!ImGui::BeginPopupModal("##scan", nullptr, ImGuiWindowFlags_NoTitleBar | (sum ? 0 : ImGuiWindowFlags_AlwaysAutoResize))) return;
+        busy = 2;
+        ImGui::PushFont(ui::bold);
+        ImGui::TextUnformatted((scanPhase == 3 ? std::string("Ajout à la Bibliothèque") : "Scanner « " + scanDir + " »").c_str());
+        ImGui::PopFont();
+        if (scanPhase == 1 || scanPhase == 3) {
+            if (scanPhase == 1 && !scanTotal) ImGui::Text("Recherche des fichiers… %d trouvés", (int)scanCount);
+            else ImGui::Text("%s : %d / %d", scanPhase == 1 ? "Analyse" : "Ajout", std::min((int)scanAt + 1, (int)scanTotal), (int)scanTotal);
+            if (ImGui::Button("Arrêter")) scanStop = true;
+            ImGui::EndPopup();
+            return;
+        }
+        int found = 0, ignored = 0, chosen = 0;
+        std::set<std::string> tags = scanBase;
+        bool whd = false;
+        for (auto &it : scanItems) {
+            if (it.kind.empty()) { if (it.why != "piste") ignored++; continue; }
+            found++;
+            if (it.on) { chosen++; if (it.kind == library::ROM) tags.insert(it.tags.begin(), it.tags.end()); if (scan::cat(it.kind) == library::WHD) whd = true; }
+        }
+        ImGui::PushTextWrapPos(0);
+        auto pl = [](int n, const char *w) { return std::to_string(n) + " " + w + (n > 1 ? "s" : ""); };
+        std::string top = pl((int)scanItems.size(), "fichier") + ", " + pl(found, "reconnu");
+        if (ignored) top += " (" + pl(ignored, "autre") + " " + (ignored > 1 ? "ignorés" : "ignoré") + ")";
+        top += scanStopped ? ". Analyse arrêtée avant la fin." : ".";
+        ImGui::TextUnformatted(top.c_str());
+        if (found) {
+            ImGui::TextUnformatted(("Kickstart après l'ajout : " + scan::kickLine(tags)).c_str());
+            if (whd && !tags.count("a1200")) ImGui::TextDisabled("Les jeux WHDLoad demandent votre Kickstart 3.1 de l'A1200 (AROS ne leur suffit pas) ; certains jeux A500 veulent aussi le 1.3.");
+        } else ImGui::TextUnformatted("Aucun fichier Amiga reconnu ici. Essayez un autre dossier, ou le dossier parent.");
+        ImGui::PopTextWrapPos();
+        ImGui::BeginChild("##scanliste", ImVec2(0, -ImGui::GetFrameHeightWithSpacing() * 2.6f), ImGuiChildFlags_Borders);
+        for (auto &[kind, title] : scan::cats) {
+            std::vector<size_t> list;
+            for (size_t k = 0; k < scanItems.size(); k++) if (!scanItems[k].kind.empty() && scan::cat(scanItems[k].kind) == kind) list.push_back(k);
+            if (list.empty()) continue;
+            int fresh = 0;
+            bool any = false;
+            for (size_t k : list) { if (scanItems[k].why.empty()) fresh++; if (scanItems[k].on) any = true; }
+            int other = (int)list.size() - fresh;
+            ImGui::PushID(kind.c_str());
+            ImGui::BeginDisabled(!fresh);
+            if (ImGui::Checkbox("##tout", &any)) for (size_t k : list) if (scanItems[k].why.empty()) scanItems[k].on = any;
+            ImGui::EndDisabled();
+            ImGui::SameLine();
+            std::string head = title + " : " + std::to_string(fresh) + (other ? " (+" + std::to_string(other) + (other > 1 ? " déjà là ou non importables)" : " déjà là ou non importable)") : "");
+            ImGui::SetNextItemOpen(kind == library::ROM || list.size() <= 6, ImGuiCond_Once);
+            if (ImGui::TreeNode("##liste", "%s", head.c_str())) {
+                for (size_t j = 0; j < list.size() && j < 300; j++) {
+                    auto &it = scanItems[list[j]];
+                    ImGui::PushID((int)list[j]);
+                    ImGui::BeginDisabled(!it.why.empty());
+                    ImGui::Checkbox(it.rel.c_str(), &it.on);
+                    ImGui::EndDisabled();
+                    std::string d = it.label + (!it.label.empty() && !it.why.empty() ? " · " : "") + it.why;
+                    if (!d.empty()) { ImGui::SameLine(); ImGui::TextDisabled("%s", d.c_str()); }
+                    ImGui::PopID();
+                }
+                if (list.size() > 300) ImGui::TextDisabled("… et %d autres", (int)list.size() - 300);
+                ImGui::TreePop();
+            }
+            ImGui::PopID();
+        }
+        ImGui::EndChild();
+        ui::note("Les fichiers restent où ils sont : l'application les lit sur place. Les Kickstart sont installés comme ROM de la machine.");
+        ImGui::BeginDisabled(!chosen);
+        std::string add = chosen ? "Ajouter à la Bibliothèque (" + std::to_string(chosen) + ")" : "Rien à ajouter";
+        if (ui::primaryButton(add.c_str())) { ImGui::CloseCurrentPopup(); scanImport(); }
+        ImGui::EndDisabled();
+        ImGui::SameLine();
+        if (ImGui::Button("Autre dossier…")) { scanPhase = 0; ImGui::CloseCurrentPopup(); ImGui::EndPopup(); scanStart(); return; }
+        ImGui::SameLine();
+        if (ImGui::Button("Fermer")) { scanPhase = 0; scanItems.clear(); ImGui::CloseCurrentPopup(); }
+        ImGui::EndPopup();
+    }
 
     // Disquette formatée (880 Ko) pour les sauvegardes des jeux : rangée dans la Bibliothèque et mise dans DF1:
     void blankDisk() {
@@ -444,6 +569,8 @@ struct Home {
         ImGui::BeginChild("##texte", ImVec2(0, -ImGui::GetFrameHeightWithSpacing() - 8 * scale));
         ImGui::TextWrapped("%s",
             "1. Kickstart : ajoutez vos fichiers ROM, plusieurs si vous voulez (3.1 pour l'A1200, 1.3 pour l'Amiga 500) : chacun sert à la machine qui lui convient. Sans eux, la ROM libre AROS démarre, mais WHDLoad, AGS et la plupart des jeux demandent un vrai Kickstart.\n"
+            "\n"
+            "Le plus simple : Bibliothèque › « Scanner un dossier… » (celui d'Amiga Forever, une clé USB, votre dossier Amiga) : Kickstart, jeux WHDLoad, disquettes, disques durs, CD et configurations .uae sont reconnus d'un coup ; un bilan montre ce qui est déjà là et les Kickstart qui manquent.\n"
             "\n"
             "2. Jeux et disques : ajoutez vos jeux WHDLoad (.lha, .zip), disquettes, disques durs (.hdf) et CD à la Bibliothèque, ou glissez-les sur la fenêtre. Ils sont lus sur place, sans copie. Un jeu WHDLoad se lance d'un clic (▶ Jouer). Pour AGS, ajoutez tous ses .hdf d'un coup.\n"
             "\n"
@@ -767,6 +894,7 @@ struct Home {
         wizard();
         help();
         web();
+        scanDraw();
         // Messages
         if (!alerts.empty() && !ImGui::IsPopupOpen("##alerte")) ImGui::OpenPopup("##alerte");
         ImGui::SetNextWindowSizeConstraints(ImVec2(360 * scale, 0), ImVec2(560 * scale, io.DisplaySize.y * 0.8f));

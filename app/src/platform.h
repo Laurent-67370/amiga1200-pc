@@ -20,7 +20,10 @@ long selfPid();
 // Fichiers choisis par l'utilisateur (vide : annulé). filters : « Disquettes|*.adf;*.dms » …
 std::vector<std::string> openFiles(const std::string &title, bool multiple, const std::vector<std::string> &filters = {});
 std::string saveFile(const std::string &title, const std::string &name, const std::string &ext);
+// Choix d'un dossier (scan de la Bibliothèque) ; vide si annulé
+std::string openFolder(const std::string &title);
 // Linux sans zenity ni kdialog : sélecteur de fichiers dessiné par l'application (fourni par l'interface)
+// Extensions {"/"} : choix d'un dossier
 using Browser = std::vector<std::string> (*)(const std::string &title, bool multiple, bool save, const std::string &name,
                                              const std::vector<std::string> &exts);
 void setBrowser(Browser b);

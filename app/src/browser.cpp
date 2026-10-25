@@ -26,6 +26,8 @@ std::vector<std::string> browse(const std::string &title, bool multiple, bool sa
     std::set<std::string> chosen;
     char fname[512] = {0};
     snprintf(fname, sizeof fname, "%s", name.c_str());
+    // Extensions {"/"} : on choisit un dossier (celui qui est affiché)
+    bool folder = exts.size() == 1 && exts[0] == "/";
     bool all = exts.empty(), done = false, ok = false;
     std::vector<std::pair<std::string, bool>> entries;   // nom, dossier ?
     auto load = [&] {
@@ -35,6 +37,7 @@ std::vector<std::string> browse(const std::string &title, bool multiple, bool sa
             std::string n = e.path().filename().u8string();
             if (n.empty() || n[0] == '.') continue;
             bool d = e.is_directory(ec);
+            if (!d && folder) continue;
             if (!d && !all) {
                 std::string x = e.path().extension().u8string();
                 if (!x.empty()) x.erase(0, 1);
@@ -68,7 +71,7 @@ std::vector<std::string> browse(const std::string &title, bool multiple, bool sa
         ImGui::SameLine();
         if (ImGui::Button("Dossier personnel")) { dir = home; load(); }
         ImGui::SameLine();
-        if (!exts.empty() && ImGui::Checkbox("Tous les fichiers", &all)) load();
+        if (!exts.empty() && !folder && ImGui::Checkbox("Tous les fichiers", &all)) load();
         ImGui::TextDisabled("%s", dir.u8string().c_str());
         float bottom = ImGui::GetFrameHeightWithSpacing() * (save ? 2.2f : 1.2f);
         ImGui::BeginChild("##liste", ImVec2(0, -bottom), ImGuiChildFlags_Borders);
@@ -92,9 +95,9 @@ std::vector<std::string> browse(const std::string &title, bool multiple, bool sa
             ImGui::SetNextItemWidth(-1);
             ImGui::InputTextWithHint("##nom", "Nom du fichier", fname, sizeof fname);
         }
-        bool can = save ? fname[0] != 0 : !chosen.empty();
+        bool can = folder || (save ? fname[0] != 0 : !chosen.empty());
         ImGui::BeginDisabled(!can);
-        if (ui::primaryButton(save ? "Enregistrer" : multiple && chosen.size() > 1 ? "Choisir ces fichiers" : "Choisir")) { ok = true; done = true; }
+        if (ui::primaryButton(folder ? "Choisir ce dossier" : save ? "Enregistrer" : multiple && chosen.size() > 1 ? "Choisir ces fichiers" : "Choisir")) { ok = true; done = true; }
         ImGui::EndDisabled();
         ImGui::SameLine();
         if (ImGui::Button("Annuler")) done = true;
@@ -109,7 +112,8 @@ std::vector<std::string> browse(const std::string &title, bool multiple, bool sa
     lastDir = dir.u8string();
     std::vector<std::string> r;
     if (!ok) return r;
-    if (save) r.push_back((dir / fs::u8path(fname)).u8string());
+    if (folder) r.push_back(dir.u8string());
+    else if (save) r.push_back((dir / fs::u8path(fname)).u8string());
     else for (auto &n : chosen) r.push_back((dir / fs::u8path(n)).u8string());
     return r;
 }

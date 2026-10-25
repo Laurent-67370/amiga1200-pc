@@ -23,7 +23,7 @@ if(WIN32)
 endif()
 add_executable(amiga1200 ${WIN_RC}
   app/src/main.cpp app/src/home.cpp app/src/emu.cpp app/src/store.cpp app/src/config.cpp app/src/kickstarts.cpp
-  app/src/platform.cpp app/src/ui.cpp app/src/crash.cpp app/src/library.cpp app/src/zip.cpp app/src/extras.cpp app/src/blankdisk.cpp app/src/midi.cpp app/src/padkeys.cpp app/src/browser.cpp
+  app/src/platform.cpp app/src/ui.cpp app/src/crash.cpp app/src/library.cpp app/src/zip.cpp app/src/extras.cpp app/src/blankdisk.cpp app/src/midi.cpp app/src/padkeys.cpp app/src/browser.cpp app/src/scan.cpp
   ${IMGUI}/imgui.cpp ${IMGUI}/imgui_draw.cpp ${IMGUI}/imgui_tables.cpp ${IMGUI}/imgui_widgets.cpp
   ${IMGUI}/backends/imgui_impl_sdl2.cpp ${IMGUI}/backends/imgui_impl_sdlrenderer2.cpp)
 target_include_directories(amiga1200 PRIVATE app/src native ${IMGUI} ${IMGUI}/backends third_party/stb)
