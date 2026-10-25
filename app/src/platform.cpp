@@ -284,6 +284,39 @@ std::string saveFile(const std::string &title, const std::string &name, const st
 #endif
 }
 
+std::string openFolder(const std::string &title) {
+#ifdef _WIN32
+    std::string r;
+    HRESULT hi = CoInitializeEx(nullptr, COINIT_APARTMENTTHREADED | COINIT_DISABLE_OLE1DDE);
+    IFileOpenDialog *d = nullptr;
+    if (SUCCEEDED(CoCreateInstance(CLSID_FileOpenDialog, nullptr, CLSCTX_INPROC_SERVER, IID_IFileOpenDialog, (void **)&d))) {
+        DWORD o = 0;
+        d->GetOptions(&o);
+        d->SetOptions(o | FOS_PICKFOLDERS | FOS_FORCEFILESYSTEM | FOS_PATHMUSTEXIST);
+        std::wstring wt = wide(title);
+        d->SetTitle(wt.c_str());
+        if (SUCCEEDED(d->Show(nullptr))) {
+            IShellItem *it = nullptr;
+            if (SUCCEEDED(d->GetResult(&it))) {
+                PWSTR p = nullptr;
+                if (SUCCEEDED(it->GetDisplayName(SIGDN_FILESYSPATH, &p))) { r = narrow(p); CoTaskMemFree(p); }
+                it->Release();
+            }
+        }
+        d->Release();
+    }
+    if (SUCCEEDED(hi)) CoUninitialize();
+    return r;
+#else
+    std::vector<std::string> r;
+    if (has("zenity")) r = runLines("zenity --file-selection --directory --title=" + shq(title) + " 2>/dev/null", '\n');
+    else if (has("kdialog")) r = runLines("kdialog --title " + shq(title) + " --getexistingdirectory . 2>/dev/null", '\n');
+    else if (browser) r = browser(title, false, false, "", {"/"});
+    else message("Choix de dossier impossible", "Installez zenity (ou kdialog) pour choisir un dossier.");
+    return r.empty() ? std::string() : r[0];
+#endif
+}
+
 void open(const std::string &target) {
 #ifdef _WIN32
     ShellExecuteW(nullptr, L"open", wide(target).c_str(), nullptr, nullptr, SW_SHOWNORMAL);

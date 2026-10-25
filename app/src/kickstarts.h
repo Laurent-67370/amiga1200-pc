@@ -27,6 +27,10 @@ bool cdtvExt(Rom &out);
 bool hasForWhd();
 bool cd32Rom();
 std::string family(int v);
+// ROM déjà lue (et déchiffrée) par le scan d'un dossier ; les ROM de la CD32 vont dans cd32.rom et cd32ext.rom
+bool installData(const std::vector<uint8_t> &d, Rom *out = nullptr);
+// ROM répertoriée (table d'Amiberry) : libellé, machines, extension du CDTV
+bool knownRom(uint32_t crc, std::string &label, std::set<std::string> &models, bool &cdtvExt);
 // Nom attendu par WHDLoad (paquet skick), vide si inconnu
 std::string whdName(uint32_t crc);
 }

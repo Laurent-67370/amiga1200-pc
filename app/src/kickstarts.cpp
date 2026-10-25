@@ -192,6 +192,18 @@ bool install(const std::string &path, std::string &why, Rom *out) {
     if (d.size() != 262144 && d.size() != 524288 && d.size() != 1048576) {
         why = "ce fichier n'a pas la taille d'un Kickstart (256 Ko, 512 Ko ou 1 Mo)"; return false;
     }
+    return installData(d, out);
+}
+
+bool knownRom(uint32_t crc, std::string &label, std::set<std::string> &models, bool &cdtv) {
+    auto it = known().find(crc);
+    if (it == known().end()) return false;
+    label = it->second.label; models = it->second.models; cdtv = it->second.cdtvExt;
+    return true;
+}
+
+bool installData(const std::vector<uint8_t> &d, Rom *out) {
+    if (d.size() != 262144 && d.size() != 524288 && d.size() != 1048576) return false;
     uint32_t crc = crc32(d);
     std::string f;
     if (crc == 0x1E62D4A5 || crc == 0x87746BE2) f = paths::sys() + (crc == 0x87746BE2 ? "cd32ext.rom" : "cd32.rom");

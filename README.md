@@ -56,6 +56,11 @@ applications (Linux).
   AGS compris). Fichiers glissés sur la fenêtre : Kickstart installé, disque dur branché, disquette mise dans DF0:.
 - **Plusieurs Kickstart**, reconnus à leur contenu (somme CRC et version, 3.1.4 et 3.2 compris) : chacun sert
   automatiquement à la machine qui lui convient. Sinon, la ROM libre **AROS** fournie.
+- **Scanner un dossier** (Bibliothèque) : un dossier choisi (Amiga Forever, clé USB…) est parcouru avec ses
+  sous-dossiers ; Kickstart (reconnus par empreinte, ROM chiffrées d'Amiga Forever déchiffrées avec le `rom.key` du
+  dossier), jeux WHDLoad, disquettes, disques durs, CD, archives `.zip` et configurations `.uae` sont reconnus par leur
+  contenu. Un bilan dit ce qui est déjà là (y compris une copie sous un autre nom) et quels Kickstart manquent ; les
+  fichiers restent lus sur place.
 - **Bibliothèque** (onglets Jeux, Disquettes, Disques durs, CD) : les fichiers déjà choisis, retrouvés d'un clic avec
   l'image du jeu ; « ▶ Jouer », DF0:/DF1:, « Brancher » un disque dur, « ▶ CD32 » / « ▶ CDTV ». Ajout par « Ajouter des
   fichiers… » ou en glissant les fichiers sur la fenêtre. Les **.zip sont analysés** : un disque dur ou un jeu WHDLoad
