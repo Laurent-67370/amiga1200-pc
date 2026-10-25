@@ -964,7 +964,10 @@ int hdt_copy(const char *hdf, int part, const char *dest, const char *const *src
             char *nm = (char *)malloc(cut + 1);
             memcpy(nm, latName, cut); nm[cut] = 0;
             char *c = cleanPath(nm);
-            snprintf(folder, sizeof folder, "%s", c[0] ? c : "Disquette");
+            /* 25 caractères au plus : son icône « dossier.info » doit tenir dans les 30 d'un nom AmigaDOS (sinon même nom) */
+            snprintf(folder, 26, "%s", c[0] ? c : "Disquette");
+            for (size_t k = strlen(folder); k > 0 && strchr(" ([", folder[k - 1]); k--) folder[k - 1] = 0;
+            if (!folder[0]) snprintf(folder, sizeof folder, "Disquette");
             free(c); free(nm);
             if (!disk || !readAdf(disk, dlen, prefix, folder, &items, &problems, bn))
                 sadd(&problems, "%s : pas de fichiers AmigaDOS sur cette disquette (jeu à chargeur spécial) ; utilisez-la directement dans un lecteur\n", bn);
