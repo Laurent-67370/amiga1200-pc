@@ -10,6 +10,8 @@ std::string exeDir();
 std::string exePath();
 // Dossier Documents de l'utilisateur
 std::string documentsDir();
+// Dossier Images de l'utilisateur
+std::string picturesDir();
 // Relance de l'application avec ces arguments et ces variables d'environnement ; renvoie un identifiant de processus (0 : échec)
 long spawnSelf(const std::vector<std::string> &args, const std::map<std::string, std::string> &env = {});
 // Le processus tourne-t-il encore ?

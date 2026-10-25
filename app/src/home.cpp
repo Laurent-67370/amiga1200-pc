@@ -2,7 +2,9 @@
 // L'émulation tourne dans un second processus (le cœur garde un état global) : l'accueil reste ouvert.
 #include "app.h"
 #include "config.h"
+#include "extras.h"
 #include "kickstarts.h"
+#include "library.h"
 #include "platform.h"
 #include "store.h"
 #include "ui.h"
@@ -12,6 +14,9 @@
 #include <ctime>
 #include <filesystem>
 #include <functional>
+#include <map>
+#include <mutex>
+#include <thread>
 #include <vector>
 
 namespace fs = std::filesystem;
@@ -29,9 +34,22 @@ struct Home {
     std::vector<Rom> roms;
     double nextCheck = 0;
     int busy = 6;
+    std::vector<std::string> dropped;
+    // Bibliothèque : onglet, éléments, images des jeux (textures gardées, refaites si l'image change)
+    std::string libKind = library::WHD;
+    std::vector<LibItem> lib;
+    struct Thumb { SDL_Texture *tex = nullptr; int w = 0, h = 0; long long stamp = -1; };
+    std::map<std::string, Thumb> thumbs;
+    // Analyse des .zip et des .hdf, à part : ses comptes rendus sont repris par la boucle principale
+    std::mutex mtx;
+    std::vector<std::function<void()>> pending;
+    int working = 0;
+    char cfgBuf[96] = {0};
+    std::string importFile;
+    void later(std::function<void()> f) { std::lock_guard<std::mutex> l(mtx); pending.push_back(std::move(f)); SDL_Event e{}; e.type = SDL_USEREVENT; SDL_PushEvent(&e); }
 
     void alert(const std::string &t, const std::string &m) { alerts.push_back({t, m}); }
-    void refresh() { s.load(); roms = kickstarts::list(); }
+    void refresh() { s.load(); roms = kickstarts::list(); lib = library::all(); }
 
     bool cdtvReady() { Rom a, b; return kickstarts::cdtvExt(a) && kickstarts::best("CDTV", b); }
 
@@ -55,19 +73,52 @@ struct Home {
         return r;
     }
 
-    // Fichiers choisis ou glissés : un Kickstart est installé, un disque dur branché, une disquette mise dans DF0:
+    // Fichiers choisis ou glissés : un Kickstart est installé, le reste rangé dans la Bibliothèque ; les .zip et les
+    // .hdf sont analysés à part (disque dur, jeu WHDLoad ou disquette ; jeu WHDLoad installé sur un disque dur)
     void addFiles(const std::vector<std::string> &files) {
+        int added = 0;
+        bool roms = false;
+        std::string last;
+        std::vector<std::string> zips, hdfs;
         for (auto &f : files) {
-            std::string e = paths::ext(f);
+            std::string k = library::kind(f);
             std::error_code ec;
             auto size = fs::file_size(fs::u8path(f), ec);
-            if (e == "rom" || ((size == 262144 || size == 524288 || size == 1048576) && e != "adf" && e != "iso")) { installRom(f); continue; }
-            if (e == "hdf" || e == "hdz" || e == "vhd") { auto h = s.hds(); if (std::find(h.begin(), h.end(), f) == h.end() && h.size() < 8) { h.push_back(f); s.setList("hds", h); } continue; }
-            if (e == "iso" || e == "chd" || e == "cue") { s.set("cd", f); continue; }
-            s.setFloppy(0, f);
-            s.applyProfile();
+            if (k == library::ROM || (k.empty() && (size == 262144 || size == 524288 || size == 1048576))) { installRom(f); roms = true; continue; }
+            if (paths::ext(f) == "zip") { zips.push_back(f); added++; continue; }
+            if (library::add(f)) { added++; last = library::kind(f); if (last == library::HDF) hdfs.push_back(f); }
         }
+        if (!last.empty()) setTab(last);
+        if (!files.empty() && added == 0 && !roms)
+            alert("Fichiers non reconnus", "La Bibliothèque accepte les jeux WHDLoad (.lha, .zip), les disquettes (ADF, DMS, IPF…), les disques durs (.hdf) et les CD.");
         refresh();
+        if (zips.empty() && hdfs.empty()) return;
+        working++;
+        std::thread([this, zips, hdfs] {
+            std::vector<std::pair<std::string, zipimport::Result>> results;
+            for (auto &z : zips) results.push_back({z, zipimport::inspect(z)});
+            std::vector<std::string> games;
+            for (auto &h : hdfs) if (zipimport::bootsWhdload(h)) games.push_back(h);
+            later([this, results, games] {
+                working--;
+                std::string notes;
+                auto note = [&](const std::string &n) { notes += (notes.empty() ? "" : "\n\n") + n; };
+                for (auto &g : games) { library::add(g, library::WHDHDF); note(paths::name(g) + " : jeu WHDLoad sur disque dur, rangé dans Jeux (▶ Jouer)"); setTab(library::WHD); }
+                for (auto &[z, r] : results) {
+                    for (auto &f : r.found) {
+                        library::add(f.path, f.kind);
+                        note(paths::name(f.path) + (f.kind == library::WHDHDF ? " : jeu WHDLoad sur disque dur, rangé dans Jeux (▶ Jouer)"
+                                                    : f.kind == library::WHD ? " : jeu WHDLoad, rangé dans Jeux" : " : disque dur, rangé dans Disques durs"));
+                        setTab(f.kind == library::HDF ? library::HDF : library::WHD);
+                    }
+                    if (r.whdArchive) { library::add(z, library::WHD); note(paths::name(z) + " : jeu WHDLoad, rangé dans Jeux (▶ Jouer)"); setTab(library::WHD); }
+                    if (!r.problem.empty()) note(r.problem);
+                    if (r.found.empty() && r.problem.empty() && !r.whdArchive) { library::add(z, library::FLOPPY); setTab(library::FLOPPY); }
+                }
+                refresh();
+                if (!notes.empty()) alert("Fichiers ajoutés", notes);
+            });
+        }).detach();
     }
 
     void installRom(const std::string &p) {
@@ -104,8 +155,119 @@ struct Home {
         if (m == "CD32" && !kickstarts::cd32Rom()) { alert("ROM de la CD32 nécessaire", "La CD32 démarre sur sa propre ROM : ajoutez kick40060.CD32 (puis son extension), ou une ROM complète de 1 Mo."); return; }
         if (m == "CDTV" && !cdtvReady()) { alert("ROM du CDTV nécessaires", "Le CDTV démarre sur un Kickstart 1.3 et sur son extension (ROM de 256 Ko)."); return; }
         if (Settings::isWhd(s.floppy(0)) && !kickstarts::hasForWhd()) { alert("Kickstart nécessaire", "WHDLoad a besoin d'un vrai Kickstart (3.1 de l'A1200 de préférence) : AROS ne lui suffit pas."); return; }
+        if (!s.floppy(0).empty()) library::add(s.floppy(0));
+        for (auto &h : s.hds()) library::add(h);
         launch(config::content(s));
     }
+
+    // Jeu installé sur un .hdf qui démarre WHDLoad tout seul : un A1200 avec Kickstart 3.x et 8 Mo de Fast, ce seul disque
+    void playWhdHdf(const LibItem &it) {
+        if (!kickstarts::hasForWhd()) { alert("Kickstart nécessaire", "WHDLoad a besoin d'un vrai Kickstart (3.1 de l'A1200 de préférence) : AROS ne lui suffit pas."); return; }
+        library::touch(it.path);
+        launch(config::write(s, false, it.path), it.name(), it.path);
+    }
+    void playWhd(const LibItem &it) {
+        if (!kickstarts::hasForWhd()) { alert("Kickstart nécessaire", "WHDLoad a besoin d'un vrai Kickstart (3.1 de l'A1200 de préférence) : AROS ne lui suffit pas."); return; }
+        library::touch(it.path);
+        launch(it.path);
+    }
+    // CD de la CD32 ou du CDTV : la console démarre dessus (il lui faut ses ROM)
+    void playCd(const LibItem &it, const std::string &console) {
+        if (console == "CD32" && !kickstarts::cd32Rom()) { alert("ROM de la CD32 nécessaire", "La CD32 démarre sur sa propre ROM : ajoutez kick40060.CD32 (puis son extension), ou une ROM complète de 1 Mo, avec « Ajouter des Kickstart… »."); return; }
+        if (console == "CDTV" && !cdtvReady()) { alert("ROM du CDTV nécessaires", "Le CDTV démarre sur un Kickstart 1.3 et sur son extension (ROM de 256 Ko) : ajoutez-les avec « Ajouter des Kickstart… »."); return; }
+        library::touch(it.path);
+        s.set("cd", it.path); s.setModel(console);
+        powerOn();
+    }
+
+    // Image d'un jeu (capture), gardée en texture
+    Thumb *thumb(const std::string &file) {
+        std::error_code ec;
+        long long stamp = paths::exists(file) ? (long long)fs::last_write_time(fs::u8path(file), ec).time_since_epoch().count() : 0;
+        Thumb &t = thumbs[file];
+        if (t.stamp == stamp) return t.tex ? &t : nullptr;
+        if (t.tex) { SDL_DestroyTexture(t.tex); t.tex = nullptr; }
+        t.stamp = stamp;
+        std::vector<uint8_t> px;
+        if (stamp && captures::load(file, px, t.w, t.h)) {
+            t.tex = SDL_CreateTexture(ren, SDL_PIXELFORMAT_RGBA32, SDL_TEXTUREACCESS_STATIC, t.w, t.h);
+            if (t.tex) { SDL_UpdateTexture(t.tex, nullptr, px.data(), t.w * 4); SDL_SetTextureScaleMode(t.tex, SDL_ScaleModeLinear); }
+        }
+        return t.tex ? &t : nullptr;
+    }
+
+    void drawLibrary() {
+        static const std::pair<const char *, const char *> tabs[] = {{"whd", "Jeux"}, {"floppy", "Disquettes"}, {"hdf", "Disques durs"}, {"cd", "CD"}};
+        auto inTab = [](const LibItem &it, const std::string &k) { return it.kind == k || (k == library::WHD && it.kind == library::WHDHDF); };
+        if (ImGui::BeginTabBar("##bib")) {
+            for (auto &[k, n] : tabs) {
+                int count = (int)std::count_if(lib.begin(), lib.end(), [&](const LibItem &it) { return inTab(it, k); });
+                std::string label = std::string(n) + (count ? " (" + std::to_string(count) + ")" : "") + "###" + k;
+                if (ImGui::BeginTabItem(label.c_str(), nullptr, wantTab == k ? ImGuiTabItemFlags_SetSelected : 0)) {
+                    // Onglet demandé (fichiers ajoutés) : pris dès qu'il est affiché ; sinon celui que l'on touche
+                    if (wantTab.empty() || wantTab == k) { libKind = k; if (wantTab == k) wantTab.clear(); }
+                    ImGui::EndTabItem();
+                }
+            }
+            ImGui::EndTabBar();
+        }
+        std::vector<LibItem> shown;
+        for (auto &it : lib) if (inTab(it, libKind)) shown.push_back(it);
+        if (shown.empty()) {
+            ui::note(libKind == library::WHD ? "Aucun jeu. Ajoutez des archives WHDLoad (.lha, .zip) ou des jeux WHDLoad sur .hdf : un clic les lance."
+                     : libKind == library::FLOPPY ? "Aucune disquette (ADF, DMS, IPF…)."
+                     : libKind == library::CD ? "Aucun CD de CD32 ou de CDTV (.iso, .chd, .cue)." : "Aucun disque dur (.hdf).");
+        }
+        float tw = 64 * scale, th = 48 * scale;
+        int i = 0;
+        for (auto &it : shown) {
+            ImGui::PushID(i++);
+            ImVec2 p0 = ImGui::GetCursorScreenPos();
+            if (Thumb *t = thumb(captures::of(it.name()))) ImGui::Image((ImTextureID)(intptr_t)t->tex, ImVec2(tw, th));
+            else {
+                ImGui::GetWindowDrawList()->AddRectFilled(p0, ImVec2(p0.x + tw, p0.y + th), IM_COL32(50, 50, 56, 255), 4 * scale);
+                ImGui::Dummy(ImVec2(tw, th));
+            }
+            ImGui::SameLine();
+            ImGui::BeginGroup();
+            ImGui::Dummy(ImVec2(0, 2 * scale));
+            if (it.exists()) ImGui::TextUnformatted(it.title().c_str());
+            else ImGui::TextDisabled("%s  (introuvable)", it.title().c_str());
+            if (it.kind == library::WHD || it.kind == library::WHDHDF) {
+                if (ui::primaryButton("▶ Jouer")) { if (it.kind == library::WHD) playWhd(it); else playWhdHdf(it); }
+            } else if (it.kind == library::CD) {
+                if (ui::primaryButton("▶ CD32")) playCd(it, "CD32");
+                Rom e;
+                if (kickstarts::cdtvExt(e)) { ImGui::SameLine(); if (ui::primaryButton("▶ CDTV")) playCd(it, "CDTV"); }
+            } else if (it.kind == library::FLOPPY) {
+                if (ui::primaryButton("▶ Jouer")) { library::touch(it.path); s.setFloppy(0, it.path); s.applyProfile(); powerOn(); }
+                ImGui::SameLine();
+                if (ImGui::Button("DF0:")) { library::touch(it.path); s.setFloppy(0, it.path); s.applyProfile(); }
+                ImGui::SameLine();
+                if (ImGui::Button("DF1:")) { library::touch(it.path); s.setFloppy(1, it.path); }
+            } else {
+                auto hds = s.hds();
+                bool on = std::find(hds.begin(), hds.end(), it.path) != hds.end();
+                if (ImGui::Button(on ? "✓ Branché" : "+ Brancher")) {
+                    if (on) hds.erase(std::remove(hds.begin(), hds.end(), it.path), hds.end());
+                    else if (hds.size() < 8) { library::touch(it.path); hds.push_back(it.path); }
+                    s.setList("hds", hds);
+                    if (!on) s.applyProfile();
+                }
+            }
+            ImGui::SameLine();
+            if (ImGui::Button("✕")) { library::remove(it.path); refresh(); }
+            ImGui::EndGroup();
+            ImGui::PopID();
+        }
+        if (ImGui::Button("Ajouter des fichiers…"))
+            addFiles(platform::openFiles("Jeux WHDLoad (.lha, .zip), disquettes, disques durs (.hdf), CD ou Kickstart", true,
+                                         {"Fichiers Amiga|*.lha;*.lzh;*.lzx;*.zip;*.adf;*.adz;*.dms;*.ipf;*.scp;*.hdf;*.hdz;*.iso;*.chd;*.cue;*.rom"}));
+        if (working) { ImGui::SameLine(); ImGui::TextDisabled("Analyse des archives…"); }
+        ui::note("Glissez aussi vos fichiers sur cette fenêtre. Un jeu WHDLoad se lance d'un clic ; les .zip sont analysés (disque dur ou jeu WHDLoad extraits, archive abîmée signalée) ; un Kickstart est installé comme ROM de la machine.");
+    }
+    std::string wantTab;
+    void setTab(const std::string &k) { libKind = wantTab = k; }
 
     void resumeGame() {
         std::string g = s.get("resumeGame");
@@ -188,6 +350,9 @@ struct Home {
             ImGui::SameLine();
             if (ImGui::Button("CD32")) s.setModel("CD32");
         }
+        endCard();
+
+        if (card("bib", "Bibliothèque")) drawLibrary();
         endCard();
 
         if (card("kick", "Kickstart")) {
@@ -282,6 +447,68 @@ struct Home {
         }
         endCard();
 
+        if (card("cfg", "Configurations")) {
+            auto names = configs::names();
+            if (names.empty()) ui::note("Aucune configuration enregistrée.");
+            int k = 0;
+            for (auto &n : names) {
+                ImGui::PushID(k++);
+                ImGui::TextUnformatted(n.c_str());
+                ImGui::SameLine();
+                if (ImGui::SmallButton("Charger")) { configs::restore(s, n); refresh(); }
+                ImGui::SameLine();
+                if (ImGui::SmallButton("✕")) configs::remove(s, n);
+                ImGui::PopID();
+            }
+            ImGui::SetNextItemWidth(220 * scale);
+            ImGui::InputTextWithHint("##nom", "Nom de la configuration", cfgBuf, sizeof cfgBuf);
+            ImGui::SameLine();
+            if (ImGui::Button("Enregistrer") && cfgBuf[0]) { configs::save(s, cfgBuf); cfgBuf[0] = 0; }
+            if (ImGui::Button("Exporter .uae…")) {
+                std::string n = s.bootKey().empty() ? "amiga" : s.bootKey().substr(0, s.bootKey().rfind('.'));
+                std::string f = platform::saveFile("Configuration WinUAE (.uae)", n + ".uae", "uae");
+                if (!f.empty()) alert("Export", configs::exportUae(s, f) ? "Configuration exportée : " + paths::name(f) : "Export impossible");
+            }
+            ImGui::SameLine();
+            if (ImGui::Button("Importer .uae…")) {
+                auto f = platform::openFiles("Configuration WinUAE ou Amiberry (.uae)", false, {"Configurations|*.uae"});
+                if (!f.empty()) { alert("Import", configs::importUae(s, f[0])); refresh(); }
+            }
+            ui::note("Une configuration garde la machine, la mémoire et ses disques. L'export .uae se relit dans WinUAE, Amiberry et les autres versions. La machine choisie est aussi retenue pour chaque disque de démarrage.");
+        }
+        endCard();
+
+        if (card("pc", "Changer de PC")) {
+            if (ImGui::Button("Tout exporter…")) {
+                char d[16]; time_t t = time(nullptr); strftime(d, sizeof d, "%Y-%m-%d", localtime(&t));
+                std::string f = platform::saveFile("Sauvegarde d'Amiga 1200", std::string("amiga1200-sauvegarde-") + d + ".zip", "zip");
+                if (!f.empty()) { working++; std::thread([this, f] { std::string m = backup::exportTo(f); later([this, m] { working--; alert("Changer de PC", m); }); }).detach(); }
+            }
+            ImGui::SameLine();
+            if (ImGui::Button("Importer…")) {
+                auto f = platform::openFiles("Sauvegarde d'Amiga 1200 (.zip)", false, {"Sauvegardes|*.zip"});
+                if (!f.empty()) { importFile = f[0]; ImGui::OpenPopup("##import"); }
+            }
+            if (ImGui::BeginPopupModal("##import", nullptr, ImGuiWindowFlags_AlwaysAutoResize | ImGuiWindowFlags_NoTitleBar)) {
+                ImGui::PushFont(ui::bold); ImGui::TextUnformatted("Importer la sauvegarde ?"); ImGui::PopFont();
+                ImGui::PushTextWrapPos(480 * scale);
+                ImGui::TextUnformatted("Les réglages, la Bibliothèque et les configurations sont remplacés par ceux de la sauvegarde ; ses Kickstart, sauvegardes d'état et captures s'ajoutent. Éteignez l'Amiga avant.");
+                ImGui::PopTextWrapPos();
+                if (ui::primaryButton("Importer")) {
+                    std::string f = importFile;
+                    working++;
+                    std::thread([this, f] { std::string m = backup::importFrom(f); later([this, m] { working--; refresh(); alert("Changer de PC", m); }); }).detach();
+                    ImGui::CloseCurrentPopup();
+                }
+                ImGui::SameLine();
+                if (ImGui::Button("Annuler")) ImGui::CloseCurrentPopup();
+                ImGui::EndPopup();
+            }
+            if (working) { ImGui::SameLine(); ImGui::TextDisabled("En cours…"); }
+            ui::note("Un seul fichier .zip : réglages, Bibliothèque, configurations, Kickstart, sauvegardes d'état, sauvegardes des jeux (WHDLoad, SHARED:), disques extraits des archives et captures. Les jeux rangés ailleurs n'y sont pas : sur l'autre PC, ajoutez-les à la Bibliothèque. Ce fichier contient vos Kickstart : ne le partagez pas.");
+        }
+        endCard();
+
         ui::note("Pendant le jeu : cliquez dans l'image pour capturer la souris, F12 pour la libérer et voir le menu (disquettes, sauvegarde rapide Ctrl+S / Ctrl+L, image, plein écran F11, réinitialisation). Touches Amiga : Windows ou Page préc./suiv. ; Help : Inser.");
         ImGui::End();
 
@@ -345,13 +572,19 @@ struct Home {
                     ImGui_ImplSDL2_ProcessEvent(&e);
                     if (e.type == SDL_QUIT) quit = true;
                     if (e.type == SDL_WINDOWEVENT && e.window.event == SDL_WINDOWEVENT_FOCUS_GAINED) refresh();
-                    if (e.type == SDL_DROPFILE) { addFiles({e.drop.file}); SDL_free(e.drop.file); }
+                    if (e.type == SDL_DROPFILE) { dropped.push_back(e.drop.file); SDL_free(e.drop.file); }
                 } while (SDL_PollEvent(&e));
             }
             // Fin de l'émulation : réglages relus (reprise), plantage éventuel
             if (emuPid && SDL_GetTicks64() / 1000.0 > nextCheck) {
                 nextCheck = SDL_GetTicks64() / 1000.0 + 1;
                 if (!platform::processAlive(emuPid)) { emuPid = 0; refresh(); crashCheck(crashReport); }
+            }
+            if (!dropped.empty()) { addFiles(dropped); dropped.clear(); }
+            {
+                std::vector<std::function<void()>> todo;
+                { std::lock_guard<std::mutex> l(mtx); todo.swap(pending); }
+                for (auto &f : todo) f();
             }
             if (busy > 0) busy--;
             ui::newFrame();

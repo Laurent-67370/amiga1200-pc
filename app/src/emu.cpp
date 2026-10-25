@@ -3,6 +3,8 @@
 #include "app.h"
 #include "bridge.h"
 #include "config.h"
+#include "extras.h"
+#include "library.h"
 #include "keymap.h"
 #include "platform.h"
 #include "store.h"
@@ -188,13 +190,55 @@ struct Emu {
     // ---------- actions du menu ----------
     void togglePause() { paused = !paused; amb_pause(paused ? 1 : 0); flash(paused ? "Pause" : "Reprise"); }
     void toggleTurbo() { turbo = !turbo; amb_turbo(turbo ? 1 : 0); flash(turbo ? "Turbo" : "Vitesse normale"); }
-    void quickSave() {
-        std::string f = paths::dir("etats") + stateFile(stateKey(), 0);
-        flash(amb_save_state(f.c_str()) ? "État 1 sauvegardé" : "Sauvegarde impossible");
+    // Emplacement 1 du jeu en cours (sinon de la machine)
+    void quickSave() { flash(states::save(stateKey(), 0) ? "État 1 sauvegardé" : "Sauvegarde impossible"); }
+    void quickLoad() { flash(states::load(stateKey(), 0) ? "État 1 repris" : "Aucun état à reprendre"); }
+    void screenshot() {
+        bool ok = captures::save(gameName().empty() ? "Amiga" : gameName(), true);
+        flash(ok ? "Capture enregistrée (Images/Amiga1200 et Bibliothèque)" : "Capture impossible");
     }
-    void quickLoad() {
-        std::string f = paths::dir("etats") + stateFile(stateKey(), 0);
-        flash(paths::exists(f) && amb_load_state(f.c_str()) ? "État 1 repris" : "Aucun état à reprendre");
+
+    // Fenêtre des emplacements : l'image de chacun, sa date, « Sauvegarder » et « Reprendre »
+    bool showStates = false;
+    SDL_Texture *slotTex[4] = {};
+    void loadSlotThumbs() {
+        for (int i = 0; i < 4; i++) {
+            if (slotTex[i]) { SDL_DestroyTexture(slotTex[i]); slotTex[i] = nullptr; }
+            std::vector<uint8_t> px;
+            int w, h;
+            if (captures::load(states::thumb(stateKey(), i), px, w, h)) {
+                slotTex[i] = SDL_CreateTexture(ren, SDL_PIXELFORMAT_RGBA32, SDL_TEXTUREACCESS_STATIC, w, h);
+                if (slotTex[i]) SDL_UpdateTexture(slotTex[i], nullptr, px.data(), w * 4);
+            }
+        }
+    }
+    void openStates() { release(); loadSlotThumbs(); showStates = true; }
+    void statesWindow() {
+        if (!showStates) return;
+        ImGuiIO &io = ImGui::GetIO();
+        ImGui::SetNextWindowPos(ImVec2(io.DisplaySize.x / 2, io.DisplaySize.y / 2), ImGuiCond_Appearing, ImVec2(0.5f, 0.5f));
+        std::string title = "Sauvegardes d'état : " + states::key(stateKey()) + "###etats";
+        if (!ImGui::Begin(title.c_str(), &showStates, ImGuiWindowFlags_AlwaysAutoResize | ImGuiWindowFlags_NoCollapse)) { ImGui::End(); return; }
+        float s = ImGui::GetFontSize() / 15.0f;
+        for (int i = 0; i < 4; i++) {
+            ImGui::PushID(i);
+            ImVec2 p0 = ImGui::GetCursorScreenPos();
+            if (slotTex[i]) ImGui::Image((ImTextureID)(intptr_t)slotTex[i], ImVec2(96 * s, 72 * s));
+            else { ImGui::GetWindowDrawList()->AddRectFilled(p0, ImVec2(p0.x + 96 * s, p0.y + 72 * s), IM_COL32(50, 50, 56, 255), 4 * s); ImGui::Dummy(ImVec2(96 * s, 72 * s)); }
+            ImGui::SameLine();
+            ImGui::BeginGroup();
+            std::string d = states::date(stateKey(), i);
+            ImGui::Text("Emplacement %d", i + 1);
+            ImGui::TextDisabled("%s", d.empty() ? "vide" : d.c_str());
+            if (ui::primaryButton("Sauvegarder")) { flash(states::save(stateKey(), i) ? "État " + std::to_string(i + 1) + " sauvegardé" : "Sauvegarde impossible"); showStates = false; }
+            ImGui::SameLine();
+            ImGui::BeginDisabled(d.empty());
+            if (ImGui::Button("Reprendre")) { flash(states::load(stateKey(), i) ? "État " + std::to_string(i + 1) + " repris" : "Aucun état à reprendre"); showStates = false; }
+            ImGui::EndDisabled();
+            ImGui::EndGroup();
+            ImGui::PopID();
+        }
+        ImGui::End();
     }
     void insert(int drive) {
         release();
@@ -236,6 +280,8 @@ struct Emu {
             if (ImGui::MenuItem("Pause", "Ctrl+P", paused)) togglePause();
             if (ImGui::MenuItem("Sauvegarde rapide", "Ctrl+S")) quickSave();
             if (ImGui::MenuItem("Reprise rapide", "Ctrl+L")) quickLoad();
+            if (ImGui::MenuItem("Sauvegardes d'état…", "Ctrl+E")) openStates();
+            if (ImGui::MenuItem("Capture d'écran", "Ctrl+K")) screenshot();
             ImGui::Separator();
             if (ImGui::MenuItem("Turbo", "Ctrl+T", turbo)) toggleTurbo();
             if (ImGui::MenuItem("Quitter le jeu (touche de sortie de WHDLoad)", "Ctrl+Q")) quitGame();
@@ -298,6 +344,8 @@ struct Emu {
         case SDL_SCANCODE_P: togglePause(); return true;
         case SDL_SCANCODE_S: quickSave(); return true;
         case SDL_SCANCODE_L: quickLoad(); return true;
+        case SDL_SCANCODE_E: openStates(); return true;
+        case SDL_SCANCODE_K: screenshot(); return true;
         case SDL_SCANCODE_O: insert(0); return true;
         case SDL_SCANCODE_T: toggleTurbo(); return true;
         case SDL_SCANCODE_Q: quitGame(); return true;
@@ -387,6 +435,7 @@ struct Emu {
             stats(nextStats);
             ui::newFrame();
             menu();
+            statesWindow();
             drawToast();
             drawFrame();
             ui::render(ren);
@@ -405,6 +454,8 @@ struct Emu {
 
     void shutdown() {
         Settings &s = Settings::shared();
+        // Image du jeu pour la Bibliothèque, s'il n'en a pas encore
+        if (amb_state() == 2 && !gameName().empty()) captures::save(gameName(), false, true);
         // « Reprendre où j'en étais » : l'état est gardé, avec ce qu'il faut pour rallumer la même chose
         if (amb_state() == 2 && !restarting && amb_save_state(Settings::resumeFile().c_str())) {
             s.set("resumeSig", s.signature());
@@ -418,6 +469,7 @@ struct Emu {
         SDL_Delay(200);   // écriture des disques
         crashEnded();
         for (auto &[id, c] : pads) SDL_GameControllerClose(c);
+        for (auto *t : slotTex) if (t) SDL_DestroyTexture(t);
         ui::shutdown();
         if (tex) SDL_DestroyTexture(tex);
         SDL_DestroyRenderer(ren);
