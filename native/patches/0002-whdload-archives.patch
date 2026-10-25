@@ -1,0 +1,37 @@
+diff --git a/libretro/libretro.cpp b/libretro/libretro.cpp
+index 505562f4..fac7aafd 100644
+--- a/libretro/libretro.cpp
++++ b/libretro/libretro.cpp
+@@ -2322,6 +2322,14 @@ static const char* get_option_value(const char* key)
+ 	return nullptr;
+ }
+ 
++/* amiga1200 : jeu WHDLoad dans une archive autre que .lha (dossier du jeu zippé, .7z, .lzx), signalé par le frontal ;
++   le lanceur WHDLoad d'Amiberry sait déjà y chercher le .slave et la monter */
++static bool libretro_whdload_archive(const std::string& ext)
++{
++	const char* v = get_option_value("amiberry_whdload_archive");
++	return v && !strcmp(v, "enabled") && (ext == "zip" || ext == "7z" || ext == "lzx");
++}
++
+ static void libretro_reset_crop_policy();
+ 
+ enum class libretro_crop_mode
+@@ -4260,7 +4268,7 @@ static void core_entry(void)
+ 	std::string game_ext;
+ 	if (game_path[0])
+ 		game_ext = path_extension_lower(game_path);
+-	const bool is_whdload = (game_ext == "lha" || game_ext == "lzh");
++	const bool is_whdload = (game_ext == "lha" || game_ext == "lzh" || libretro_whdload_archive(game_ext));
+ 	const bool is_rp9 = game_ext == "rp9";
+ 	const bool is_cd = content_is_cd || is_cd_extension(game_ext);
+ 	const bool user_kick_override = !cached_kickstart_override.empty() && cached_kickstart_override != "auto";
+@@ -5082,7 +5090,7 @@ bool retro_load_game(const struct retro_game_info *info)
+ 		path = info->path;
+ 
+ 	const std::string ext = info_ext && info_ext->ext ? info_ext->ext : path_extension_lower(path);
+-	const bool is_whdload = (ext == "lha" || ext == "lzh");
++	const bool is_whdload = (ext == "lha" || ext == "lzh" || libretro_whdload_archive(ext));
+ 	const bool is_rp9 = ext == "rp9";
+ 	libretro_debug_log("retro_load_game: path='%s' ext='%s' is_whdload=%d is_rp9=%d\n",
+ 		path.c_str(), ext.c_str(), is_whdload ? 1 : 0, is_rp9 ? 1 : 0);

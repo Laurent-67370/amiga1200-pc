@@ -1,0 +1,140 @@
+name: Applications Windows et Linux
+
+on:
+  push:
+    branches: [main, "claude/**"]
+  pull_request:
+  workflow_dispatch:
+
+permissions:
+  contents: write
+
+jobs:
+  linux:
+    # Ubuntu 22.04 : l'AppImage tourne aussi sur les distributions un peu anciennes (glibc 2.35)
+    runs-on: ubuntu-22.04
+    timeout-minutes: 90
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          submodules: true
+
+      - name: Outils
+        run: |
+          sudo apt-get update -q
+          # En-têtes pour compiler SDL2 (X11, Wayland, son…), chargés à l'exécution seulement s'ils sont là
+          sudo apt-get install -y -q zlib1g-dev imagemagick fonts-dejavu-core zip squashfs-tools \
+            libx11-dev libxext-dev libxrandr-dev libxcursor-dev libxi-dev libxss-dev libxfixes-dev libxkbcommon-dev \
+            libwayland-dev wayland-protocols libdecor-0-dev libpulse-dev libasound2-dev libdrm-dev libgbm-dev \
+            libegl1-mesa-dev libgl1-mesa-dev libdbus-1-dev libudev-dev libibus-1.0-dev
+
+      - uses: actions/cache@v4
+        with:
+          path: build/sdl2-linux
+          key: sdl2-linux-2.30.9-${{ hashFiles('scripts/build-sdl-linux.sh') }}
+
+      # Objets du cœur Amiberry gardés d'une compilation à l'autre (build-core.sh jette ceux d'anciens correctifs)
+      - uses: actions/cache@v4
+        with:
+          path: native/src-linux
+          key: amiberry-linux-${{ hashFiles('native/build-core.sh', 'native/patches/*.patch') }}-${{ github.sha }}
+          restore-keys: amiberry-linux-${{ hashFiles('native/build-core.sh', 'native/patches/*.patch') }}-
+
+      - name: Cœur Amiberry (Linux x64)
+        id: core
+        run: native/build-core.sh linux
+
+      - name: Application et AppImage
+        run: VERSION=0.1.${{ github.run_number }} scripts/package-linux.sh
+
+      # Essai réel : AROS démarre sur un A1200 (68040 rapide, RTG), sans fenêtre
+      - name: Essai du cœur (AROS)
+        run: |
+          build/linux/amiga1200 --selftest 1500 | grep -v '^096%' | tail -20
+          tail -30 ~/.local/share/Amiga1200/journal.txt | grep -v '096%' || true
+
+      - name: Journal de compilation du cœur
+        if: failure() && steps.core.outcome == 'failure'
+        run: tail -200 native/out/linux/make.log || true
+
+      - uses: actions/upload-artifact@v4
+        with:
+          name: amiga1200-linux
+          path: build/amiga1200-linux-x86_64.AppImage
+
+  windows:
+    # Compilation croisée MinGW-w64 depuis Linux
+    runs-on: ubuntu-24.04
+    timeout-minutes: 90
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          submodules: true
+
+      - name: Outils
+        run: |
+          sudo apt-get update -q
+          sudo apt-get install -y -q mingw-w64 libz-mingw-w64-dev win-iconv-mingw-w64-dev imagemagick fonts-dejavu-core zip
+          curl -sSL https://github.com/libsdl-org/SDL/releases/download/release-2.30.9/SDL2-devel-2.30.9-mingw.tar.gz | tar xz -C "$RUNNER_TEMP"
+
+      - uses: actions/cache@v4
+        with:
+          path: native/src-windows
+          key: amiberry-windows-${{ hashFiles('native/build-core.sh', 'native/patches/*.patch') }}-${{ github.sha }}
+          restore-keys: amiberry-windows-${{ hashFiles('native/build-core.sh', 'native/patches/*.patch') }}-
+
+      - name: Cœur Amiberry (Windows x64)
+        id: core
+        run: native/build-core.sh windows
+
+      - name: Application et .zip
+        run: SDL2_MINGW="$RUNNER_TEMP/SDL2-2.30.9/x86_64-w64-mingw32" VERSION=0.1.${{ github.run_number }} scripts/package-windows.sh
+
+      - name: Journal de compilation du cœur
+        if: failure() && steps.core.outcome == 'failure'
+        run: tail -200 native/out/windows/make.log || true
+
+      - uses: actions/upload-artifact@v4
+        with:
+          name: amiga1200-windows
+          path: build/amiga1200-windows-x64.zip
+
+  # Essai de l'application Windows sur un vrai Windows : AROS démarre, sans fenêtre
+  windows-test:
+    needs: windows
+    runs-on: windows-latest
+    timeout-minutes: 20
+    steps:
+      - uses: actions/download-artifact@v4
+        with:
+          name: amiga1200-windows
+      - name: Essai du cœur (AROS)
+        shell: bash
+        run: |
+          unzip -q amiga1200-windows-x64.zip
+          ./Amiga1200/Amiga1200.exe --selftest 1500 > essai.txt 2>&1 || { cat essai.txt; tail -40 "$APPDATA/Amiga1200/journal.txt"; exit 1; }
+          grep -v '^096%' essai.txt | tail -10
+
+  release:
+    needs: [linux, windows, windows-test]
+    if: github.ref == 'refs/heads/main' && github.event_name == 'push'
+    runs-on: ubuntu-24.04
+    steps:
+      - uses: actions/download-artifact@v4
+        with:
+          merge-multiple: true
+      - name: Publication « dev »
+        uses: softprops/action-gh-release@v2
+        with:
+          tag_name: dev
+          name: Version de test (compilation ${{ github.run_number }})
+          prerelease: true
+          make_latest: false
+          body: |
+            Applications Windows et Linux construites automatiquement depuis main (${{ github.sha }}).
+            Windows : décompresser amiga1200-windows-x64.zip, lancer Amiga1200\Amiga1200.exe (Windows peut avertir :
+            « Informations complémentaires » puis « Exécuter quand même »).
+            Linux : rendre exécutable amiga1200-linux-x86_64.AppImage (chmod +x) et le lancer.
+          files: |
+            amiga1200-linux-x86_64.AppImage
+            amiga1200-windows-x64.zip

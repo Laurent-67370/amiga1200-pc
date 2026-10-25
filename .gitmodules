@@ -1,0 +1,7 @@
+[submodule "amiga1200"]
+	path = amiga1200
+	url = https://github.com/laurent-67370/amiga1200.git
+	shallow = true
+[submodule "third_party/imgui"]
+	path = third_party/imgui
+	url = https://github.com/ocornut/imgui.git

@@ -1,0 +1,27 @@
+// Ce qui diffère entre Windows et Linux : dossiers, processus, dialogues de fichiers, ouverture d'un fichier ou d'une adresse
+#pragma once
+#include <string>
+#include <vector>
+#include <map>
+
+namespace platform {
+// Dossier de l'exécutable (avec la barre finale)
+std::string exeDir();
+std::string exePath();
+// Dossier Documents de l'utilisateur
+std::string documentsDir();
+// Relance de l'application avec ces arguments et ces variables d'environnement ; renvoie un identifiant de processus (0 : échec)
+long spawnSelf(const std::vector<std::string> &args, const std::map<std::string, std::string> &env = {});
+// Le processus tourne-t-il encore ?
+bool processAlive(long pid);
+long selfPid();
+// Fichiers choisis par l'utilisateur (vide : annulé). filters : « Disquettes|*.adf;*.dms » …
+std::vector<std::string> openFiles(const std::string &title, bool multiple, const std::vector<std::string> &filters = {});
+std::string saveFile(const std::string &title, const std::string &name, const std::string &ext);
+// Ouvre un fichier, un dossier ou une adresse avec l'application du système
+void open(const std::string &target);
+// Mise en veille courte précise (Windows : minuterie à 1 ms)
+void initTimers();
+// Boîte de message du système (avant que la fenêtre de l'application existe)
+void message(const std::string &title, const std::string &text);
+}
