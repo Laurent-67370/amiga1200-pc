@@ -47,7 +47,7 @@ struct Home {
     std::vector<std::function<void()>> pending;
     int working = 0;
     char cfgBuf[96] = {0};
-    bool moreDrives = false, showHelp = false;
+    bool moreDrives = false, showHelp = false, showWeb = false;
     std::vector<std::vector<std::string>> midiNames;
     std::string importFile;
     void later(std::function<void()> f) { std::lock_guard<std::mutex> l(mtx); pending.push_back(std::move(f)); SDL_Event e{}; e.type = SDL_USEREVENT; SDL_PushEvent(&e); }
@@ -411,6 +411,29 @@ struct Home {
         ImGui::EndPopup();
     }
 
+    // La version web, à l'origine du projet : même cœur, rien à installer ; les configurations .uae passent de l'une à l'autre
+    static constexpr const char *WEB_URL = "https://laurent-67370.github.io/amiga1200/";
+    void web() {
+        if (!showWeb) return;
+        if (!ImGui::IsPopupOpen("##web")) ImGui::OpenPopup("##web");
+        ImGui::SetNextWindowSize(ImVec2(540 * scale, 0));
+        if (!ImGui::BeginPopupModal("##web", nullptr, ImGuiWindowFlags_AlwaysAutoResize | ImGuiWindowFlags_NoTitleBar)) return;
+        ImGui::PushFont(ui::bold); ImGui::TextUnformatted("La version web"); ImGui::PopFont();
+        ImGui::PushTextWrapPos(510 * scale);
+        ImGui::TextUnformatted("Amiga 1200 est né dans le navigateur : la version web tourne sur le même cœur Amiberry, sans rien installer, sur ordinateur, tablette ou téléphone.");
+        ImGui::Spacing();
+        ImGui::TextColored(ImVec4(0.96f, 0.55f, 0.13f, 1), "%s", WEB_URL);
+        ImGui::Spacing();
+        ui::note("Passer de l'une à l'autre : exportez une configuration .uae ici (Configurations › Exporter .uae…), importez-la dans la version web, et inversement. Vos Kickstart et vos disques restent à ajouter de chaque côté.");
+        ImGui::PopTextWrapPos();
+        if (ui::primaryButton("Ouvrir la version web")) { platform::open(WEB_URL); showWeb = false; ImGui::CloseCurrentPopup(); }
+        ImGui::SameLine();
+        if (ImGui::Button("Copier le lien")) SDL_SetClipboardText(WEB_URL);
+        ImGui::SameLine();
+        if (ImGui::Button("Fermer")) { showWeb = false; ImGui::CloseCurrentPopup(); }
+        ImGui::EndPopup();
+    }
+
     void help() {
         if (!showHelp) return;
         if (!ImGui::IsPopupOpen("##aide")) ImGui::OpenPopup("##aide");
@@ -450,7 +473,9 @@ struct Home {
             "\n"
             "Si l'émulation s'arrête brutalement, l'accueil prépare un rapport (fin du journal) à copier ou à signaler sur GitHub.\n"
             "\n"
-            "À l'accueil aussi : DF2: et DF3:, Image (filtre, pixels réguliers), MIDI (synthétiseur ou clavier), configurations enregistrées et export .uae, et « Changer de PC » : tout exporter dans un fichier .zip, puis l'importer sur un autre PC.);");
+            "À l'accueil aussi : DF2: et DF3:, Image (filtre, pixels réguliers), MIDI (synthétiseur ou clavier), configurations enregistrées et export .uae, et « Changer de PC » : tout exporter dans un fichier .zip, puis l'importer sur un autre PC.\n"
+            "\n"
+            "Version web : la version d'origine, dans le navigateur (https://laurent-67370.github.io/amiga1200/) ; les configurations .uae passent de l'une à l'autre.");
         ImGui::EndChild();
         if (ui::primaryButton("Compris")) { showHelp = false; ImGui::CloseCurrentPopup(); }
         ImGui::EndPopup();
@@ -515,6 +540,9 @@ struct Home {
         ImGui::SameLine();
         ImGui::SetCursorPosY(y);
         if (ImGui::Button("? Aide")) showHelp = true;
+        ImGui::SameLine();
+        ImGui::SetCursorPosY(y);
+        if (ImGui::Button("Version web")) showWeb = true;
         ImGui::TextDisabled("%s", summary().c_str());
         ImGui::Spacing();
         if (ui::primaryButton("▶  Allumer l'Amiga", ImVec2(230 * scale, 40 * scale))) powerOn();
@@ -738,6 +766,7 @@ struct Home {
 
         wizard();
         help();
+        web();
         // Messages
         if (!alerts.empty() && !ImGui::IsPopupOpen("##alerte")) ImGui::OpenPopup("##alerte");
         ImGui::SetNextWindowSizeConstraints(ImVec2(360 * scale, 0), ImVec2(560 * scale, io.DisplaySize.y * 0.8f));
