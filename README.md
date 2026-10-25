@@ -13,6 +13,24 @@ pour les deux systèmes.
 > Sur PC x64, le cœur libretro d'Amiberry n'a pas de JIT : le 68040 est interprété. Le mode « Processeur rapide » le
 > fait tourner à toute la vitesse du PC, largement assez pour AGS et le Workbench sur une machine récente.
 
+## La famille Amiga 1200
+
+Quatre versions du même émulateur, toutes sur le **même cœur Amiberry 8.3 (WinUAE 6)**, avec les mêmes bases :
+Bibliothèque, jeux WHDLoad en un geste, gros disques durs (AGS), CD32 et CDTV, carte graphique RTG, sauvegardes d'état,
+configurations exportables, MIDI.
+
+| Version | Dépôt | Pour | Particularités | Obtenir |
+|---|---|---|---|---|
+| **Web**, l'origine du projet | [amiga1200](https://github.com/laurent-67370/amiga1200) | Navigateur : ordinateur, Android, iPhone, iPad | Rien à installer, hors ligne (application PWA), deux moteurs (WinUAE 6 et PUAE) | [Ouvrir la page](https://laurent-67370.github.io/amiga1200/) |
+| **Android** | [amiga1200-android](https://github.com/laurent-67370/amiga1200-android) | Téléphones et tablettes 64 bits (Android 9 et plus) | **JIT**, manette et clavier tactiles, raccourcis sur l'écran d'accueil | [APK (Releases → dev)](https://github.com/laurent-67370/amiga1200-android/releases/tag/dev) |
+| **Mac** | [amiga1200-mac](https://github.com/laurent-67370/amiga1200-mac) | Mac Apple Silicon (macOS 13 et plus) | **JIT**, application macOS (menus, CoreMIDI, manettes Game Controller) | [.dmg (Releases → dev)](https://github.com/laurent-67370/amiga1200-mac/releases/tag/dev) |
+| **Windows et Linux** (ce dépôt) | [amiga1200-pc](https://github.com/laurent-67370/amiga1200-pc) | PC x64 : Windows 10/11, Linux (AppImage) | Une seule base pour les deux systèmes, .zip portable et AppImage autonome (sans JIT : 68040 interprété) | [.zip et AppImage (Releases → dev)](https://github.com/laurent-67370/amiga1200-pc/releases/tag/dev) |
+
+Passer de l'une à l'autre : une configuration exportée en **.uae** (machine, mémoire, disques) se relit dans les
+quatre versions, et aussi dans WinUAE et Amiberry. Les applications Android, Mac et PC ont un bouton **Web** en haut
+de l'accueil qui mène à la version web. Les Kickstart et les disques restent à ajouter dans chaque version : ils ne
+sont jamais fournis ni envoyés nulle part.
+
 ## Installer
 
 Ouvrez la page **[Releases → dev](https://github.com/laurent-67370/amiga1200-pc/releases/tag/dev)**.
