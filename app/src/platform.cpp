@@ -11,6 +11,8 @@
 #include <shellapi.h>
 #include <shlobj.h>
 #include <mmsystem.h>
+#include <shobjidl.h>
+#include <objbase.h>
 #else
 #include <unistd.h>
 #include <signal.h>
@@ -23,6 +25,8 @@ extern char **environ;
 namespace fs = std::filesystem;
 
 namespace platform {
+static Browser browser;
+void setBrowser(Browser b) { browser = b; }
 
 #ifdef _WIN32
 static std::wstring wide(const std::string &s) {
@@ -237,6 +241,20 @@ std::vector<std::string> openFiles(const std::string &title, bool multiple, cons
         std::string c = "kdialog --title " + shq(title) + " --getopenfilename . " + (multiple ? "--multiple --separate-output" : "");
         return runLines(c + " 2>/dev/null", '\n');
     }
+    if (browser) {
+        // Extensions des filtres (« *.adf;*.dms » → adf, dms)
+        std::vector<std::string> exts;
+        for (auto &f : filters) {
+            auto bar = f.find('|');
+            if (bar == std::string::npos) continue;
+            std::string pat = f.substr(bar + 1), cur;
+            for (char c : pat + ";") {
+                if (c == ';') { if (cur.rfind("*.", 0) == 0) exts.push_back(cur.substr(2)); cur.clear(); }
+                else cur += (char)tolower((unsigned char)c);
+            }
+        }
+        return browser(title, multiple, false, "", exts);
+    }
     message("Choix de fichiers impossible", "Installez zenity (ou kdialog) pour choisir des fichiers, ou glissez-les sur la fenêtre.");
     return {};
 #endif
@@ -257,6 +275,7 @@ std::string saveFile(const std::string &title, const std::string &name, const st
     std::vector<std::string> r;
     if (has("zenity")) r = runLines("zenity --file-selection --save --confirm-overwrite --title=" + shq(title) + " --filename=" + shq(name) + " 2>/dev/null", '\n');
     else if (has("kdialog")) r = runLines("kdialog --title " + shq(title) + " --getsavefilename " + shq(name) + " 2>/dev/null", '\n');
+    else if (browser) r = browser(title, false, true, name, {ext});
     else message("Enregistrement impossible", "Installez zenity (ou kdialog) pour choisir où enregistrer.");
     if (r.empty()) return {};
     std::string p = r[0];
@@ -271,6 +290,53 @@ void open(const std::string &target) {
 #else
     std::string c = "xdg-open " + shq(target) + " >/dev/null 2>&1 &";
     if (std::system(c.c_str())) {}
+#endif
+}
+
+std::string installShortcuts() {
+#ifdef _WIN32
+    // Raccourci .lnk (IShellLink) vers l'exécutable, dans le menu Démarrer et sur le bureau
+    CoInitializeEx(nullptr, COINIT_APARTMENTTHREADED);
+    auto make = [](REFKNOWNFOLDERID folder) {
+        std::string dir = knownFolder(folder);
+        IShellLinkW *link = nullptr;
+        bool ok = false;
+        if (SUCCEEDED(CoCreateInstance(CLSID_ShellLink, nullptr, CLSCTX_INPROC_SERVER, IID_IShellLinkW, (void **)&link))) {
+            std::wstring exe = wide(exePath());
+            link->SetPath(exe.c_str());
+            link->SetWorkingDirectory(wide(fs::u8path(exePath()).parent_path().u8string()).c_str());
+            link->SetDescription(L"Émulateur Amiga");
+            link->SetIconLocation(exe.c_str(), 0);
+            IPersistFile *pf = nullptr;
+            if (SUCCEEDED(link->QueryInterface(IID_IPersistFile, (void **)&pf))) {
+                ok = SUCCEEDED(pf->Save(wide(dir + "\\Amiga 1200.lnk").c_str(), TRUE));
+                pf->Release();
+            }
+            link->Release();
+        }
+        return ok;
+    };
+    bool a = make(FOLDERID_Programs), b = make(FOLDERID_Desktop);
+    CoUninitialize();
+    if (a && b) return "Raccourcis ajoutés : menu Démarrer et bureau. Si vous déplacez le dossier Amiga1200, ajoutez-les de nouveau.";
+    if (a || b) return std::string("Raccourci ajouté : ") + (a ? "menu Démarrer." : "bureau.");
+    return "Raccourcis impossibles à créer.";
+#else
+    // Menu des applications : fichier .desktop et icône dans ~/.local/share (lancé par l'AppImage, là où elle est)
+    std::string home = std::getenv("HOME") ? std::getenv("HOME") : ".";
+    std::string self = std::getenv("APPIMAGE") ? std::getenv("APPIMAGE") : exePath();
+    std::error_code ec;
+    fs::path apps = fs::path(home) / ".local/share/applications", icons = fs::path(home) / ".local/share/icons/hicolor/192x192/apps";
+    fs::create_directories(apps, ec);
+    fs::create_directories(icons, ec);
+    fs::copy_file(fs::u8path(exeDir() + "resources/icon.png"), icons / "amiga1200.png", fs::copy_options::overwrite_existing, ec);
+    std::string q = "\"" + self + "\"";
+    FILE *f = fopen((apps / "amiga1200.desktop").c_str(), "w");
+    if (!f) return "Raccourci impossible à créer.";
+    fprintf(f, "[Desktop Entry]\nType=Application\nName=Amiga 1200\nComment=Émulateur Amiga (cœur Amiberry)\nExec=%s\nIcon=amiga1200\nCategories=Game;Emulator;\nTerminal=false\n", q.c_str());
+    fclose(f);
+    if (std::system("update-desktop-database ~/.local/share/applications >/dev/null 2>&1")) {}
+    return "Amiga 1200 est ajouté au menu des applications (rubrique Jeux). Si vous déplacez l'AppImage, ajoutez-le de nouveau.";
 #endif
 }
 

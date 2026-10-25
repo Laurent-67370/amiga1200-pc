@@ -390,7 +390,18 @@ struct Home {
             default: msg = "AROS, la ROM libre, démarre un Workbench à découvrir. Pour les jeux, ajoutez plus tard vos Kickstart (carte Kickstart).";
             }
             ImGui::TextUnformatted(msg.c_str());
-            ui::note("Pendant le jeu : cliquez dans l'image pour capturer la souris, F12 pour la libérer et voir le menu (disquettes, sauvegardes d'état, image, touches de la manette, sortie d'un jeu WHDLoad).");
+            if (card("raccourcis", "Raccourcis")) {
+#ifdef _WIN32
+            if (ImGui::Button("Ajouter au menu Démarrer et au bureau")) alert("Raccourcis", platform::installShortcuts());
+            ui::note("Un raccourci « Amiga 1200 » dans le menu Démarrer et sur le bureau, vers ce dossier de l'application.");
+#else
+            if (ImGui::Button("Ajouter au menu des applications")) alert("Raccourcis", platform::installShortcuts());
+            ui::note("« Amiga 1200 » dans le menu des applications de votre bureau (rubrique Jeux), vers cette AppImage.");
+#endif
+        }
+        endCard();
+
+        ui::note("Pendant le jeu : cliquez dans l'image pour capturer la souris, F12 pour la libérer et voir le menu (disquettes, sauvegardes d'état, image, touches de la manette, sortie d'un jeu WHDLoad).");
             if (canPower) { if (ui::primaryButton("▶ Allumer")) { close(); powerOn(); } ImGui::SameLine(); }
             if (ImGui::Button("Aide détaillée")) { close(); showHelp = true; }
             ImGui::SameLine();
@@ -767,7 +778,8 @@ struct Home {
 
     int run() {
         paths::installResources();
-        win = SDL_CreateWindow("Amiga 1200", SDL_WINDOWPOS_CENTERED, SDL_WINDOWPOS_CENTERED, 760, 860, SDL_WINDOW_RESIZABLE | SDL_WINDOW_ALLOW_HIGHDPI);
+        float k = ui::screenScale();
+        win = SDL_CreateWindow("Amiga 1200", SDL_WINDOWPOS_CENTERED, SDL_WINDOWPOS_CENTERED, (int)(760 * k), (int)(860 * k), SDL_WINDOW_RESIZABLE | SDL_WINDOW_ALLOW_HIGHDPI);
         if (!win) { platform::message("Démarrage impossible", SDL_GetError()); return 1; }
         SDL_SetWindowMinimumSize(win, 560, 480);
         ui::setIcon(win);
