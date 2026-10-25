@@ -3,6 +3,11 @@
 #include "app.h"
 #include "bridge.h"
 #include "config.h"
+#include "extras.h"
+#include "library.h"
+#include "blankdisk.h"
+#include "midi.h"
+#include "padkeys.h"
 #include "keymap.h"
 #include "platform.h"
 #include "store.h"
@@ -72,6 +77,12 @@ struct Emu {
     double toastUntil = 0;
     std::map<SDL_JoystickID, SDL_GameController *> pads;
     std::map<SDL_JoystickID, int> players;
+    // Boutons changés en touches du clavier pour ce jeu, et ceux qui tiennent leur touche enfoncée
+    std::map<std::string, int> keyMap;
+    std::map<SDL_JoystickID, std::map<std::string, bool>> held;
+    // Quatre lecteurs de disquettes branchés (DF2: ou DF3: utilisés au démarrage)
+    bool fourDrives = false;
+    bool midiOn = false;
     std::string game;
 
     static double now() { return SDL_GetTicks64() / 1000.0; }
@@ -169,6 +180,21 @@ struct Emu {
         SDL_GameController *c = it->second;
         auto b = [&](SDL_GameControllerButton x) { return SDL_GameControllerGetButton(c, x) != 0; };
         int ax = SDL_GameControllerGetAxis(c, SDL_CONTROLLER_AXIS_LEFTX), ay = SDL_GameControllerGetAxis(c, SDL_CONTROLLER_AXIS_LEFTY);
+        // Boutons réglés en touches du clavier : un appui, un relâchement
+        std::map<std::string, bool> pressed = {
+            {"X", b(SDL_CONTROLLER_BUTTON_X)}, {"Y", b(SDL_CONTROLLER_BUTTON_Y)},
+            {"L1", b(SDL_CONTROLLER_BUTTON_LEFTSHOULDER)}, {"R1", b(SDL_CONTROLLER_BUTTON_RIGHTSHOULDER)},
+            {"L2", SDL_GameControllerGetAxis(c, SDL_CONTROLLER_AXIS_TRIGGERLEFT) > 16000},
+            {"R2", SDL_GameControllerGetAxis(c, SDL_CONTROLLER_AXIS_TRIGGERRIGHT) > 16000},
+            {"L3", b(SDL_CONTROLLER_BUTTON_LEFTSTICK)}, {"R3", b(SDL_CONTROLLER_BUTTON_RIGHTSTICK)},
+            {"Menu", b(SDL_CONTROLLER_BUTTON_START)}, {"Options", b(SDL_CONTROLLER_BUTTON_BACK)},
+        };
+        auto &h = held[id];
+        for (auto &[btn, key] : keyMap) {
+            bool down = pressed[btn];
+            if (down != h[btn]) { amb_key(down ? 1 : 0, (unsigned)key); h[btn] = down; }
+        }
+        auto joy = [&](const char *btn) { return !keyMap.count(btn) && pressed[btn]; };
         unsigned m = 0;
         if (b(SDL_CONTROLLER_BUTTON_DPAD_UP) || ay < -16000) m |= 1 << 4;
         if (b(SDL_CONTROLLER_BUTTON_DPAD_DOWN) || ay > 16000) m |= 1 << 5;
@@ -176,25 +202,67 @@ struct Emu {
         if (b(SDL_CONTROLLER_BUTTON_DPAD_RIGHT) || ax > 16000) m |= 1 << 7;
         if (b(SDL_CONTROLLER_BUTTON_A)) m |= 1 << 0;            // tir
         if (b(SDL_CONTROLLER_BUTTON_B)) m |= 1 << 8;            // 2e bouton
-        if (b(SDL_CONTROLLER_BUTTON_X)) m |= 1 << 1;
-        if (b(SDL_CONTROLLER_BUTTON_Y)) m |= 1 << 9;
-        if (b(SDL_CONTROLLER_BUTTON_LEFTSHOULDER)) m |= 1 << 10;
-        if (b(SDL_CONTROLLER_BUTTON_RIGHTSHOULDER)) m |= 1 << 11;
-        if (b(SDL_CONTROLLER_BUTTON_START)) m |= 1 << 3;
-        if (b(SDL_CONTROLLER_BUTTON_BACK)) m |= 1 << 2;
+        if (joy("X")) m |= 1 << 1;
+        if (joy("Y")) m |= 1 << 9;
+        if (joy("L1")) m |= 1 << 10;
+        if (joy("R1")) m |= 1 << 11;
+        if (joy("Menu")) m |= 1 << 3;
+        if (joy("Options")) m |= 1 << 2;
         amb_joy(players[id], m);
     }
 
     // ---------- actions du menu ----------
     void togglePause() { paused = !paused; amb_pause(paused ? 1 : 0); flash(paused ? "Pause" : "Reprise"); }
     void toggleTurbo() { turbo = !turbo; amb_turbo(turbo ? 1 : 0); flash(turbo ? "Turbo" : "Vitesse normale"); }
-    void quickSave() {
-        std::string f = paths::dir("etats") + stateFile(stateKey(), 0);
-        flash(amb_save_state(f.c_str()) ? "État 1 sauvegardé" : "Sauvegarde impossible");
+    // Emplacement 1 du jeu en cours (sinon de la machine)
+    void quickSave() { flash(states::save(stateKey(), 0) ? "État 1 sauvegardé" : "Sauvegarde impossible"); }
+    void quickLoad() { flash(states::load(stateKey(), 0) ? "État 1 repris" : "Aucun état à reprendre"); }
+    void screenshot() {
+        bool ok = captures::save(gameName().empty() ? "Amiga" : gameName(), true);
+        flash(ok ? "Capture enregistrée (Images/Amiga1200 et Bibliothèque)" : "Capture impossible");
     }
-    void quickLoad() {
-        std::string f = paths::dir("etats") + stateFile(stateKey(), 0);
-        flash(paths::exists(f) && amb_load_state(f.c_str()) ? "État 1 repris" : "Aucun état à reprendre");
+
+    // Fenêtre des emplacements : l'image de chacun, sa date, « Sauvegarder » et « Reprendre »
+    bool showStates = false;
+    SDL_Texture *slotTex[4] = {};
+    void loadSlotThumbs() {
+        for (int i = 0; i < 4; i++) {
+            if (slotTex[i]) { SDL_DestroyTexture(slotTex[i]); slotTex[i] = nullptr; }
+            std::vector<uint8_t> px;
+            int w, h;
+            if (captures::load(states::thumb(stateKey(), i), px, w, h)) {
+                slotTex[i] = SDL_CreateTexture(ren, SDL_PIXELFORMAT_RGBA32, SDL_TEXTUREACCESS_STATIC, w, h);
+                if (slotTex[i]) SDL_UpdateTexture(slotTex[i], nullptr, px.data(), w * 4);
+            }
+        }
+    }
+    void openStates() { release(); loadSlotThumbs(); showStates = true; }
+    void statesWindow() {
+        if (!showStates) return;
+        ImGuiIO &io = ImGui::GetIO();
+        ImGui::SetNextWindowPos(ImVec2(io.DisplaySize.x / 2, io.DisplaySize.y / 2), ImGuiCond_Appearing, ImVec2(0.5f, 0.5f));
+        std::string title = "Sauvegardes d'état : " + states::key(stateKey()) + "###etats";
+        if (!ImGui::Begin(title.c_str(), &showStates, ImGuiWindowFlags_AlwaysAutoResize | ImGuiWindowFlags_NoCollapse)) { ImGui::End(); return; }
+        float s = ImGui::GetFontSize() / 15.0f;
+        for (int i = 0; i < 4; i++) {
+            ImGui::PushID(i);
+            ImVec2 p0 = ImGui::GetCursorScreenPos();
+            if (slotTex[i]) ImGui::Image((ImTextureID)(intptr_t)slotTex[i], ImVec2(96 * s, 72 * s));
+            else { ImGui::GetWindowDrawList()->AddRectFilled(p0, ImVec2(p0.x + 96 * s, p0.y + 72 * s), IM_COL32(50, 50, 56, 255), 4 * s); ImGui::Dummy(ImVec2(96 * s, 72 * s)); }
+            ImGui::SameLine();
+            ImGui::BeginGroup();
+            std::string d = states::date(stateKey(), i);
+            ImGui::Text("Emplacement %d", i + 1);
+            ImGui::TextDisabled("%s", d.empty() ? "vide" : d.c_str());
+            if (ui::primaryButton("Sauvegarder")) { flash(states::save(stateKey(), i) ? "État " + std::to_string(i + 1) + " sauvegardé" : "Sauvegarde impossible"); showStates = false; }
+            ImGui::SameLine();
+            ImGui::BeginDisabled(d.empty());
+            if (ImGui::Button("Reprendre")) { flash(states::load(stateKey(), i) ? "État " + std::to_string(i + 1) + " repris" : "Aucun état à reprendre"); showStates = false; }
+            ImGui::EndDisabled();
+            ImGui::EndGroup();
+            ImGui::PopID();
+        }
+        ImGui::End();
     }
     void insert(int drive) {
         release();
@@ -204,6 +272,19 @@ struct Emu {
         amb_insert_disk(drive, f[0].c_str());
         Settings::shared().setFloppy(drive, f[0]);
         flash("DF" + std::to_string(drive) + ": " + paths::name(f[0]));
+    }
+    // Disquette formatée, pour les sauvegardes des jeux ou les données : créée puis mise dans DF1:
+    void blankDisk() {
+        release();
+        std::string f = platform::saveFile("Disquette vierge formatée (880 Ko), mise dans DF1:", "Sauvegardes.adf", "adf");
+        if (f.empty()) return;
+        std::string label = paths::name(f);
+        label = label.substr(0, label.rfind('.'));
+        if (!blankdisk::write(f, label)) { flash("Création de la disquette impossible"); return; }
+        library::add(f);
+        amb_insert_disk(1, f.c_str());
+        Settings::shared().setFloppy(1, f);
+        flash("DF1: " + paths::name(f) + " (vierge)");
     }
     void eject(int drive) { amb_insert_disk(drive, ""); Settings::shared().setFloppy(drive, ""); flash("DF" + std::to_string(drive) + ": éjectée"); }
     void setFilter(int f) {
@@ -215,11 +296,72 @@ struct Emu {
         bool fs = SDL_GetWindowFlags(win) & SDL_WINDOW_FULLSCREEN_DESKTOP;
         SDL_SetWindowFullscreen(win, fs ? 0 : SDL_WINDOW_FULLSCREEN_DESKTOP);
     }
+    // Touche de sortie des jeux WHDLoad : F10, * du pavé numérique ou Échap
+    static const std::vector<std::pair<int, const char *>> &quitKeys() {
+        static const std::vector<std::pair<int, const char *>> k = {{291, "F10"}, {268, "* du pavé numérique"}, {27, "Échap"}};
+        return k;
+    }
     void quitGame() {
         unsigned k = (unsigned)Settings::shared().quitKey();
         amb_key(1, k);
         SDL_AddTimer(100, [](Uint32, void *p) -> Uint32 { amb_key(0, (unsigned)(uintptr_t)p); return 0; }, (void *)(uintptr_t)k);
-        flash("Touche de sortie de WHDLoad");
+        std::string n = "?";
+        for (auto &[c, t] : quitKeys()) if (c == (int)k) n = t;
+        flash("Touche de sortie : " + n);
+    }
+
+    // Image et cadrage de ce jeu : filtre, pixels réguliers, 4:3 ou toute la fenêtre, zoom et position verticale
+    bool showDisplay = false, showPadKeys = false;
+    void displayWindow() {
+        if (!showDisplay) return;
+        Settings &s = Settings::shared();
+        ImGuiIO &io = ImGui::GetIO();
+        ImGui::SetNextWindowPos(ImVec2(io.DisplaySize.x / 2, io.DisplaySize.y / 2), ImGuiCond_Appearing, ImVec2(0.5f, 0.5f));
+        std::string title = "Image : " + states::key(game) + "###image";
+        if (!ImGui::Begin(title.c_str(), &showDisplay, ImGuiWindowFlags_AlwaysAutoResize | ImGuiWindowFlags_NoCollapse)) { ImGui::End(); return; }
+        int f = s.filter();
+        static const char *names[] = {"Lisse (adoucie)", "Nette (pixels francs)", "Écran cathodique (lignes de balayage)"};
+        for (int i = 0; i < 3; i++) if (ImGui::RadioButton(names[i], f == i)) setFilter(i);
+        bool v = s.integer();
+        if (ImGui::Checkbox("Pixels réguliers (agrandissement en multiple entier)", &v)) s.setBool("integer", v);
+        v = s.fill();
+        if (ImGui::Checkbox("Image sur toute la fenêtre (sinon en 4:3)", &v)) s.setBool("fill", v);
+        float zoom = (float)s.getDouble("zoom:" + game, 1), shift = (float)s.getDouble("decalage:" + game, 0);
+        float w = 320 * ImGui::GetFontSize() / 15.0f;
+        ImGui::SetNextItemWidth(w);
+        if (ImGui::SliderFloat("Zoom (ce jeu)", &zoom, 1.0f, 1.6f, "%.2f×")) s.setDouble("zoom:" + game, zoom);
+        ImGui::SetNextItemWidth(w);
+        int pct = (int)std::lround(shift * 100);
+        if (ImGui::SliderInt("Position verticale", &pct, -25, 25, pct == 0 ? "centrée" : "%+d %%")) s.setDouble("decalage:" + game, pct / 100.0);
+        ui::note("Le cadrage est retenu pour ce jeu : zoomez pour retirer les bandes noires, puis remontez ou descendez l'image.");
+        if (ImGui::Button("Cadrage d'origine")) { s.setDouble("zoom:" + game, 1); s.setDouble("decalage:" + game, 0); }
+        ImGui::SameLine();
+        if (ui::primaryButton("OK")) showDisplay = false;
+        ImGui::End();
+    }
+    void padKeysWindow() {
+        if (!showPadKeys) return;
+        ImGuiIO &io = ImGui::GetIO();
+        ImGui::SetNextWindowPos(ImVec2(io.DisplaySize.x / 2, io.DisplaySize.y / 2), ImGuiCond_Appearing, ImVec2(0.5f, 0.5f));
+        std::string title = "Touches de la manette : " + states::key(game) + "###touches";
+        if (!ImGui::Begin(title.c_str(), &showPadKeys, ImGuiWindowFlags_AlwaysAutoResize | ImGuiWindowFlags_NoCollapse)) { ImGui::End(); return; }
+        ImGui::PushTextWrapPos(420 * ImGui::GetFontSize() / 15.0f);
+        ui::note("A et B restent les boutons de tir, la croix et le stick le joystick. Les autres boutons peuvent taper une touche du clavier Amiga, pour ce jeu seulement.");
+        ImGui::PopTextWrapPos();
+        bool changed = false;
+        for (auto &b : padkeys::buttons()) {
+            int cur = keyMap.count(b) ? keyMap[b] : 0;
+            std::string preview = padkeys::keys()[0].second;
+            for (auto &[k, n] : padkeys::keys()) if (k == cur) preview = n;
+            ImGui::SetNextItemWidth(200 * ImGui::GetFontSize() / 15.0f);
+            if (ImGui::BeginCombo(b.c_str(), preview.c_str())) {
+                for (auto &[k, n] : padkeys::keys()) if (ImGui::Selectable(n.c_str(), k == cur)) { if (k) keyMap[b] = k; else keyMap.erase(b); changed = true; }
+                ImGui::EndCombo();
+            }
+        }
+        if (changed) padkeys::save(game, keyMap);
+        if (ui::primaryButton("OK")) showPadKeys = false;
+        ImGui::End();
     }
     // Le cœur ne se rallume pas dans le même processus : un nouveau processus prend la suite
     void restart() {
@@ -236,9 +378,16 @@ struct Emu {
             if (ImGui::MenuItem("Pause", "Ctrl+P", paused)) togglePause();
             if (ImGui::MenuItem("Sauvegarde rapide", "Ctrl+S")) quickSave();
             if (ImGui::MenuItem("Reprise rapide", "Ctrl+L")) quickLoad();
+            if (ImGui::MenuItem("Sauvegardes d'état…", "Ctrl+E")) openStates();
+            if (ImGui::MenuItem("Capture d'écran", "Ctrl+K")) screenshot();
             ImGui::Separator();
             if (ImGui::MenuItem("Turbo", "Ctrl+T", turbo)) toggleTurbo();
             if (ImGui::MenuItem("Quitter le jeu (touche de sortie de WHDLoad)", "Ctrl+Q")) quitGame();
+            if (ImGui::BeginMenu("Touche de sortie")) {
+                for (auto &[k, n] : quitKeys()) if (ImGui::MenuItem(n, nullptr, s.quitKey() == k)) s.setInt("quitKey", k);
+                ImGui::EndMenu();
+            }
+            if (ImGui::MenuItem("Touches de la manette (ce jeu)…")) { release(); showPadKeys = true; }
             if (ImGui::MenuItem("Réinitialiser (redémarrage à froid)", "Ctrl+R")) restart();
             ImGui::Separator();
             if (ImGui::MenuItem("Journal")) platform::open(paths::log());
@@ -246,14 +395,17 @@ struct Emu {
             ImGui::EndMenu();
         }
         if (ImGui::BeginMenu("Disquettes")) {
-            for (int i = 0; i < 2; i++) {
+            for (int i = 0; i < (fourDrives ? 4 : 2); i++) {
                 std::string cur = s.floppy(i);
                 if (ImGui::MenuItem(("DF" + std::to_string(i) + ":…").c_str(), i == 0 ? "Ctrl+O" : nullptr)) insert(i);
                 if (!cur.empty()) ImGui::TextDisabled("   %s", paths::name(cur).c_str());
             }
             ImGui::Separator();
-            if (ImGui::MenuItem("Éjecter DF0:")) eject(0);
-            if (ImGui::MenuItem("Éjecter DF1:")) eject(1);
+            if (ImGui::BeginMenu("Éjecter")) {
+                for (int i = 0; i < (fourDrives ? 4 : 2); i++) if (ImGui::MenuItem(("DF" + std::to_string(i) + ":").c_str())) eject(i);
+                ImGui::EndMenu();
+            }
+            if (ImGui::MenuItem("Disquette vierge…", "Ctrl+N")) blankDisk();
             ImGui::Separator();
             bool snd = s.floppySound();
             if (ImGui::MenuItem("Bruit des lecteurs", nullptr, snd)) { s.setBool("floppySound", !snd); amb_floppy_sound(!snd); }
@@ -267,6 +419,9 @@ struct Emu {
             ImGui::Separator();
             if (ImGui::MenuItem("Pixels réguliers (agrandissement entier)", nullptr, s.integer())) s.setBool("integer", !s.integer());
             if (ImGui::MenuItem("Image sur toute la fenêtre (sinon 4:3)", nullptr, s.fill())) s.setBool("fill", !s.fill());
+            ImGui::Separator();
+            if (ImGui::MenuItem("Image et cadrage de ce jeu…", "Ctrl+J")) { release(); showDisplay = true; }
+            if (ImGui::MenuItem("Filtre suivant", "Ctrl+I")) setFilter((s.filter() + 1) % 3);
             ImGui::Separator();
             if (ImGui::MenuItem("Plein écran", "F11")) fullScreen();
             ImGui::EndMenu();
@@ -298,6 +453,11 @@ struct Emu {
         case SDL_SCANCODE_P: togglePause(); return true;
         case SDL_SCANCODE_S: quickSave(); return true;
         case SDL_SCANCODE_L: quickLoad(); return true;
+        case SDL_SCANCODE_E: openStates(); return true;
+        case SDL_SCANCODE_K: screenshot(); return true;
+        case SDL_SCANCODE_N: blankDisk(); return true;
+        case SDL_SCANCODE_J: showDisplay = true; return true;
+        case SDL_SCANCODE_I: setFilter((Settings::shared().filter() + 1) % 3); return true;
         case SDL_SCANCODE_O: insert(0); return true;
         case SDL_SCANCODE_T: toggleTurbo(); return true;
         case SDL_SCANCODE_Q: quitGame(); return true;
@@ -332,6 +492,8 @@ struct Emu {
         if (!ren) ren = SDL_CreateRenderer(win, -1, SDL_RENDERER_SOFTWARE);
         ui::init(win, ren, ui::displayScale(win));
         game = stateKey();
+        keyMap = padkeys::load(game);
+        fourDrives = !Settings::shared().floppy(2).empty() || !Settings::shared().floppy(3).empty();
         if (!coreStart(content)) { fail("le fil de l'émulation n'a pas pu démarrer"); return 1; }
         double t0 = now(), nextStats = now() + 1;
         bool running = false;
@@ -373,6 +535,10 @@ struct Emu {
             if (!running) {
                 if (st == 2) {
                     running = true;
+                    if (Settings::shared().midi()) {
+                        std::string m = midi::start(Settings::shared().get("midiOut"), Settings::shared().midiIn());
+                        amb_log(m.c_str()); flash(m); midiOn = true;
+                    }
                     if (resume) {
                         // L'état gardé est rechargé une fois l'Amiga allumé
                         SDL_Delay(1500);
@@ -387,6 +553,9 @@ struct Emu {
             stats(nextStats);
             ui::newFrame();
             menu();
+            statesWindow();
+            displayWindow();
+            padKeysWindow();
             drawToast();
             drawFrame();
             ui::render(ren);
@@ -405,6 +574,8 @@ struct Emu {
 
     void shutdown() {
         Settings &s = Settings::shared();
+        // Image du jeu pour la Bibliothèque, s'il n'en a pas encore
+        if (amb_state() == 2 && !gameName().empty()) captures::save(gameName(), false, true);
         // « Reprendre où j'en étais » : l'état est gardé, avec ce qu'il faut pour rallumer la même chose
         if (amb_state() == 2 && !restarting && amb_save_state(Settings::resumeFile().c_str())) {
             s.set("resumeSig", s.signature());
@@ -414,10 +585,12 @@ struct Emu {
                 s.set("resumeGame", std::string("hdf\n") + h + "\n" + (g ? g : paths::name(h)));
             } else s.set("resumeGame", "");
         }
+        if (midiOn) midi::stop();
         amb_stop();
         SDL_Delay(200);   // écriture des disques
         crashEnded();
         for (auto &[id, c] : pads) SDL_GameControllerClose(c);
+        for (auto *t : slotTex) if (t) SDL_DestroyTexture(t);
         ui::shutdown();
         if (tex) SDL_DestroyTexture(tex);
         SDL_DestroyRenderer(ren);

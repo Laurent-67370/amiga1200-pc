@@ -59,27 +59,47 @@ std::string exeDir() {
     return s;
 }
 
-std::string documentsDir() {
-#ifdef _WIN32
+#ifndef _WIN32
+// Dossier de xdg-user-dirs (DOCUMENTS, PICTURES…), sinon ~/<repli>, sinon le dossier personnel
+static std::string xdgDir(const char *kind, const char *fallback) {
+    std::string home = std::getenv("HOME") ? std::getenv("HOME") : ".";
+    if (FILE *f = popen((std::string("xdg-user-dir ") + kind + " 2>/dev/null").c_str(), "r")) {
+        char b[2048] = {0};
+        bool got = fgets(b, sizeof b, f) != nullptr;
+        pclose(f);
+        std::string d(got ? b : "");
+        while (!d.empty() && (d.back() == '\n' || d.back() == '\r')) d.pop_back();
+        if (!d.empty() && d != home && fs::is_directory(d)) return d;
+    }
+    // Pas de dossier déclaré : ~/Documents ou ~/Pictures, créé au besoin
+    std::error_code ec;
+    fs::create_directories(home + "/" + fallback, ec);
+    return home + "/" + fallback;
+}
+#else
+static std::string knownFolder(REFKNOWNFOLDERID id) {
     PWSTR p = nullptr;
     std::string r;
-    if (SHGetKnownFolderPath(FOLDERID_Documents, 0, nullptr, &p) == S_OK) r = narrow(p);
+    if (SHGetKnownFolderPath(id, 0, nullptr, &p) == S_OK) r = narrow(p);
     CoTaskMemFree(p);
     if (r.empty()) r = std::getenv("USERPROFILE") ? std::getenv("USERPROFILE") : ".";
     return r;
+}
+#endif
+
+std::string documentsDir() {
+#ifdef _WIN32
+    return knownFolder(FOLDERID_Documents);
 #else
-    // Dossier Documents de xdg-user-dirs (en français : ~/Documents aussi), sinon le dossier personnel
-    std::string home = std::getenv("HOME") ? std::getenv("HOME") : ".";
-    if (FILE *f = popen("xdg-user-dir DOCUMENTS 2>/dev/null", "r")) {
-        char b[2048] = {0};
-        if (fgets(b, sizeof b, f)) {
-            std::string d(b);
-            while (!d.empty() && (d.back() == '\n' || d.back() == '\r')) d.pop_back();
-            pclose(f);
-            if (!d.empty() && d != home && fs::is_directory(d)) return d;
-        } else pclose(f);
-    }
-    return fs::is_directory(home + "/Documents") ? home + "/Documents" : home;
+    return xdgDir("DOCUMENTS", "Documents");
+#endif
+}
+
+std::string picturesDir() {
+#ifdef _WIN32
+    return knownFolder(FOLDERID_Pictures);
+#else
+    return xdgDir("PICTURES", "Pictures");
 #endif
 }
 
