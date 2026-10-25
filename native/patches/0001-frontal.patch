@@ -1,0 +1,65 @@
+diff --git a/libretro/libretro.cpp b/libretro/libretro.cpp
+index 096730bb..505562f4 100644
+--- a/libretro/libretro.cpp
++++ b/libretro/libretro.cpp
+@@ -2960,7 +2960,9 @@ libretro_crop libretro_compute_crop(void)
+ 		return libretro_cache_crop(crop);
+ 	}
+ 
+-	if (libretro_cached_crop_valid && libretro_cached_crop_frame == libretro_crop_frame)
++	/* Le recadrage automatique parcourt toute l'image : en WebAssembly il doublait le temps de calcul d'une
++	   image. Il est refait toutes les 8 images (le cadrage ne change presque jamais d'une image à l'autre) */
++	if (libretro_cached_crop_valid && libretro_crop_frame - libretro_cached_crop_frame < 8)
+ 		return libretro_cached_crop;
+ 
+ 	if (!libretro_crop_was_enabled) {
+@@ -3516,7 +3518,8 @@ static void apply_port_device(struct uae_prefs* prefs, unsigned port, unsigned d
+ 		TCHAR joy_name[8];
+ 		_sntprintf(joy_name, sizeof joy_name, _T("joy%d"), joy_index);
+ 		name = joy_name;
+-		mode = JSEM_MODE_JOYSTICK;
++		/* Manette CD32 : les 7 boutons (le mode joystick simple n'en garde que deux) */
++		mode = device == RETRO_DEVICE_AMIGA_CD32PAD ? JSEM_MODE_JOYSTICK_CD32 : JSEM_MODE_JOYSTICK;
+ 	}
+ 	inputdevice_joyport_config(prefs, name, nullptr, static_cast<int>(port), mode, -1, 0, true);
+ }
+@@ -3798,6 +3801,12 @@ static void keyboard_cb(bool down, unsigned keycode, uint32_t character, uint16_
+ 	case RETROK_BACKSLASH: scancode = SDL_SCANCODE_BACKSLASH; break;
+ 	case RETROK_RIGHTBRACKET: scancode = SDL_SCANCODE_RIGHTBRACKET; break;
+ 	case RETROK_BACKQUOTE: scancode = SDL_SCANCODE_GRAVE; break;
++	/* Touches absentes : apostrophe (ù en AZERTY), < > du clavier international, parenthèses du pavé (F14, F15) */
++	case RETROK_QUOTE: scancode = SDL_SCANCODE_APOSTROPHE; break;
++	case RETROK_LESS: scancode = SDL_SCANCODE_NONUSBACKSLASH; break;
++	case RETROK_F13: scancode = SDL_SCANCODE_F13; break;
++	case RETROK_F14: scancode = SDL_SCANCODE_F14; break;
++	case RETROK_F15: scancode = SDL_SCANCODE_F15; break;
+ 	case RETROK_a: scancode = SDL_SCANCODE_A; break;
+ 	case RETROK_b: scancode = SDL_SCANCODE_B; break;
+ 	case RETROK_c: scancode = SDL_SCANCODE_C; break;
+@@ -5299,6 +5308,9 @@ size_t retro_serialize_size(void)
+ 	total += currprefs.z3chipmem.size;
+ 	total += currprefs.mbresmem_low.size;
+ 	total += currprefs.mbresmem_high.size;
++	/* Mémoire des cartes graphiques RTG, sauvegardée elle aussi */
++	for (int i = 0; i < MAX_RTG_BOARDS; i++)
++		total += currprefs.rtgboards[i].rtgmem_size;
+ 	total += 8 * 1024 * 1024;
+ 	return total;
+ }
+diff --git a/src/custom.cpp b/src/custom.cpp
+index 9b4804d6..7dd08fac 100644
+--- a/src/custom.cpp
++++ b/src/custom.cpp
+@@ -4787,7 +4787,12 @@ static bool framewait(void)
+ 			frame_rendered = crender_screen(0, 1, false);
+ 			t = read_processor_time() - start;
+ 		}
++		/* WebAssembly, Android et macOS : le frontal cadence les images (une par appel de retro_run), le cœur n'attend pas */
++#if defined(__EMSCRIPTEN__) || defined(__ANDROID__) || defined(__APPLE__)
++		if (0) {
++#else
+ 		if (!currprefs.cpu_thread) {
++#endif
+ 			while (!currprefs.turbo_emulation) {
+ 				float v = rpt_vsync(clockadjust) / (syncbase / 1000.0f);
+ 				if (v >= -FRAMEWAIT_MIN_MS)
