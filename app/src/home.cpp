@@ -9,6 +9,7 @@
 #include "midi.h"
 #include "platform.h"
 #include "scan.h"
+#include "hdtools.h"
 #include "store.h"
 #include "ui.h"
 #include "imgui_impl_sdl2.h"
@@ -17,6 +18,7 @@
 #include <atomic>
 #include <memory>
 #include <set>
+#include <sstream>
 #include <ctime>
 #include <filesystem>
 #include <functional>
@@ -262,6 +264,8 @@ struct Home {
                     s.setList("hds", hds);
                     if (!on) s.applyProfile();
                 }
+                ImGui::SameLine();
+                if (ImGui::Button("Ajouter des fichiers…")) hdOpen(it.path);
             }
             ImGui::SameLine();
             if (ImGui::Button("✕")) { library::remove(it.path); refresh(); }
@@ -278,6 +282,142 @@ struct Home {
     }
     std::string wantTab;
     void setTab(const std::string &k) { libKind = wantTab = k; }
+
+    // ---------- ajouter des fichiers sur un disque dur (hdtools.c, comme « Fichiers… » de la version web) ----------
+    std::string hdAdd;   // disque visé ; vide : fenêtre fermée
+    struct HdPart { std::string name, volume, fs, reason; long long freeBytes = 0; bool ok = false; };
+    std::vector<HdPart> hdParts;
+    int hdPart = 0;
+    char hdDest[64] = "Jeux";
+    bool hdUnpack = true, hdBusy = false;
+    std::string hdLog;
+    void hdOpen(const std::string &path) { hdAdd = path; hdLog.clear(); hdPart = 0; hdLoadParts(); }
+    void hdLoadParts() {
+        hdParts.clear();
+        std::vector<char> out(16384);
+        int n = hdt_partitions(hdAdd.c_str(), out.data(), (int)out.size());
+        if (n < 0) { hdLog = std::string("Disque illisible : ") + out.data(); return; }
+        std::istringstream is(out.data());
+        std::string line;
+        while (std::getline(is, line)) {
+            std::vector<std::string> f;
+            std::istringstream ls(line);
+            std::string x;
+            while (std::getline(ls, x, '\t')) f.push_back(x);
+            f.resize(6);
+            HdPart p;
+            p.name = f[0]; p.volume = f[1]; p.fs = f[2]; p.freeBytes = atoll(f[3].c_str()); p.ok = f[4] == "1"; p.reason = f[5];
+            hdParts.push_back(p);
+        }
+        if (hdPart >= (int)hdParts.size() || !hdParts[hdPart].ok)
+            for (size_t i = 0; i < hdParts.size(); i++) if (hdParts[i].ok) { hdPart = (int)i; break; }
+    }
+    // Copie à part ; le compte rendu revient dans la boucle principale
+    void hdRun(const std::vector<std::string> &src, const std::vector<std::string> &dst, bool unpack) {
+        if (src.empty()) return;
+        hdBusy = true; hdLog = "Copie en cours…";
+        std::string disk = hdAdd, dest = hdDest;
+        int part = hdPart;
+        std::thread([this, disk, dest, part, src, dst, unpack] {
+            std::vector<const char *> sp, dp;
+            for (auto &x : src) sp.push_back(x.c_str());
+            for (auto &x : dst) dp.push_back(x.c_str());
+            std::vector<char> rep(65536);
+            hdt_copy(disk.c_str(), part, dest.c_str(), sp.data(), dst.empty() ? nullptr : dp.data(), (int)sp.size(), unpack ? 1 : 0, rep.data(), (int)rep.size());
+            std::string r = rep.data();
+            later([this, r] { hdBusy = false; hdLog = r; hdLoadParts(); });
+        }).detach();
+    }
+    // Préparer pour WHDLoad : WHDLoad dans C:, ses fichiers .RTB et les Kickstart (noms de WHDLoad) dans Devs:Kickstarts
+    void hdWhd() {
+        std::vector<std::string> src, dst;
+        std::string wb = paths::resources() + "whdboot/";
+        src.push_back(wb + "WHDLoad"); dst.push_back("C/WHDLoad");
+        std::error_code ec;
+        for (auto &e : fs::directory_iterator(fs::u8path(wb + "save-data/Kickstarts"), ec)) {
+            std::string n = e.path().filename().u8string();
+            if (paths::ext(n) == "rtb") { src.push_back(e.path().u8string()); dst.push_back("Devs/Kickstarts/" + n); }
+        }
+        for (auto &k : kickstarts::list()) {
+            std::string n = kickstarts::whdName(k.crc);
+            if (!n.empty()) { src.push_back(k.path); dst.push_back("Devs/Kickstarts/" + n); }
+        }
+        hdRun(src, dst, false);
+    }
+    // Un dossier entier, dans un dossier à son nom
+    void hdFolder() {
+        std::string d = platform::openFolder("Dossier à copier sur le disque dur");
+        if (d.empty()) return;
+        fs::path root = fs::u8path(d);
+        std::string top = root.filename().u8string();
+        if (top.empty()) top = root.parent_path().filename().u8string();
+        std::string base = hdDest;
+        while (!base.empty() && base.back() == '/') base.pop_back();
+        std::vector<std::string> src, dst;
+        std::error_code ec;
+        for (auto it = fs::recursive_directory_iterator(root, fs::directory_options::skip_permission_denied, ec); !ec && it != fs::recursive_directory_iterator(); it.increment(ec)) {
+            std::string n = it->path().filename().u8string();
+            if (n.empty() || n[0] == '.') { if (it->is_directory(ec)) it.disable_recursion_pending(); continue; }
+            if (!it->is_regular_file(ec)) continue;
+            src.push_back(it->path().u8string());
+            dst.push_back((base.empty() ? "" : base + "/") + top + "/" + fs::relative(it->path(), root, ec).generic_u8string());
+        }
+        if (src.empty()) { hdLog = "Ce dossier est vide."; return; }
+        hdRun(src, dst, false);
+    }
+    void hdDraw() {
+        if (hdAdd.empty()) return;
+        if (!ImGui::IsPopupOpen("##hdadd")) ImGui::OpenPopup("##hdadd");
+        ImGuiIO &io = ImGui::GetIO();
+        ImGui::SetNextWindowSize(ImVec2(std::min(620 * scale, io.DisplaySize.x - 40), 0));
+        ImGui::SetNextWindowPos(ImVec2(io.DisplaySize.x / 2, io.DisplaySize.y / 2), ImGuiCond_Always, ImVec2(0.5f, 0.5f));
+        if (!ImGui::BeginPopupModal("##hdadd", nullptr, ImGuiWindowFlags_AlwaysAutoResize | ImGuiWindowFlags_NoTitleBar)) return;
+        if (hdBusy) busy = 2;
+        ImGui::PushFont(ui::bold);
+        ImGui::TextUnformatted(("Ajouter sur le disque « " + paths::name(hdAdd) + " »").c_str());
+        ImGui::PopFont();
+        ImGui::PushTextWrapPos(590 * scale);
+        bool off = emuPid == 0;
+        if (!off) ImGui::TextColored(ImVec4(0.96f, 0.55f, 0.13f, 1), "L'Amiga est allumé : éteignez-le d'abord, le disque ne doit pas servir pendant la copie.");
+        for (size_t i = 0; i < hdParts.size(); i++) {
+            auto &p = hdParts[i];
+            std::string label = p.name + ":" + (p.volume.empty() ? "" : " « " + p.volume + " »") + " — " + p.fs;
+            char fr[32];
+            snprintf(fr, sizeof fr, "%.1f Mo libres", p.freeBytes / 1048576.0);
+            label += p.ok ? std::string(" — ") + fr : " : " + p.reason;
+            ImGui::BeginDisabled(!p.ok);
+            if (ImGui::RadioButton((label + "##p" + std::to_string(i)).c_str(), hdPart == (int)i)) hdPart = (int)i;
+            ImGui::EndDisabled();
+        }
+        bool can = off && !hdBusy && hdPart < (int)hdParts.size() && hdParts[hdPart].ok;
+        ImGui::SetNextItemWidth(200 * scale);
+        ImGui::InputText("Dans le dossier", hdDest, sizeof hdDest);
+        ImGui::Checkbox("Décompresser les archives .lha et .zip, ouvrir les disquettes .adf", &hdUnpack);
+        ImGui::BeginDisabled(!can);
+        if (ImGui::Button("Fichiers ou archives…")) {
+            auto f = platform::openFiles("Fichiers à copier sur le disque dur", true, {"Fichiers Amiga|*.lha;*.lzh;*.zip;*.adf;*.adz"});
+            hdRun(f, {}, hdUnpack);
+        }
+        ImGui::SameLine();
+        if (ImGui::Button("Un dossier…")) hdFolder();
+        ImGui::EndDisabled();
+        ui::note("Un jeu WHDLoad (.lha) arrive dans son propre dossier, avec son icône. Une disquette .adf est ouverte : ses fichiers vont dans un dossier à son nom. Laissez le champ vide pour copier à la racine du disque. Un fichier du même nom est remplacé.");
+        ImGui::Spacing();
+        ImGui::PushFont(ui::bold); ImGui::TextUnformatted("Préparer pour WHDLoad"); ImGui::PopFont();
+        int ks = 0;
+        for (auto &k : roms) if (!kickstarts::whdName(k.crc).empty()) ks++;
+        ImGui::TextUnformatted(ks ? "Copie WHDLoad dans C: et, dans Devs:Kickstarts, ses fichiers .RTB et vos Kickstart. Ensuite, un jeu WHDLoad copié sur ce disque se lance d'un double-clic sur son icône, depuis le Workbench."
+                                  : "Copie WHDLoad dans C: et ses fichiers .RTB dans Devs:Kickstarts. Aucun Kickstart reconnu pour WHDLoad (1.3 A500, 2.04, 3.0 ou 3.1 A1200) : ajoutez-le d'abord pour qu'il soit copié aussi.");
+        ImGui::BeginDisabled(!can);
+        if (ImGui::Button("Préparer le disque pour WHDLoad")) hdWhd();
+        ImGui::EndDisabled();
+        if (!hdLog.empty()) { ImGui::Separator(); ImGui::TextUnformatted(hdLog.c_str()); }
+        ImGui::PopTextWrapPos();
+        ImGui::BeginDisabled(hdBusy);
+        if (ui::primaryButton("Fermer")) { hdAdd.clear(); ImGui::CloseCurrentPopup(); }
+        ImGui::EndDisabled();
+        ImGui::EndPopup();
+    }
 
     // ---------- scanner un dossier : analyse à part, bilan à cocher, ajout ----------
     int scanPhase = 0;   // 0 : fermé ; 1 : recherche et analyse ; 2 : bilan ; 3 : ajout
@@ -574,6 +714,8 @@ struct Home {
             "\n"
             "2. Jeux et disques : ajoutez vos jeux WHDLoad (.lha, .zip), disquettes, disques durs (.hdf) et CD à la Bibliothèque, ou glissez-les sur la fenêtre. Ils sont lus sur place, sans copie. Un jeu WHDLoad se lance d'un clic (▶ Jouer). Pour AGS, ajoutez tous ses .hdf d'un coup.\n"
             "\n"
+            "Copier sur un disque dur : « Ajouter des fichiers… » à côté de DH0: (carte Disques) ou d'un disque dur de la Bibliothèque, Amiga éteint. Un jeu WHDLoad (.lha, .zip) arrive dans son dossier avec son icône, une disquette .adf est ouverte dans un dossier à son nom ; un dossier entier aussi. « Préparer le disque pour WHDLoad » y met WHDLoad et vos Kickstart. Un compte rendu dit ce qui a été copié et ignoré ; si la copie échoue, le disque n'est pas modifié.\n"
+            "\n"
             "3. Préréglage : « AGS / Workbench » pour AGS et le Workbench, « Amiga 500 » pour les vieux jeux, « CD32 » pour la console. Carte Machine : A600, A3000, A4000 et CDTV aussi, mémoire et carte accélératrice.\n"
             "\n"
             "4. Allumez.\n"
@@ -756,7 +898,13 @@ struct Home {
             if (ImGui::SmallButton("Choisir un CD…")) { auto r = platform::openFiles("CD de la CD32 ou du CDTV (.iso, .chd, .cue)", false, {"CD|*.iso;*.chd;*.cue"}); if (!r.empty()) s.set("cd", r[0]); }
             auto hds = s.hds();
             if (hds.empty()) ImGui::TextUnformatted("Disques durs : aucun");
-            for (size_t i = 0; i < hds.size(); i++) ImGui::Text("DH%zu: %s", i, paths::name(hds[i]).c_str());
+            for (size_t i = 0; i < hds.size(); i++) {
+                ImGui::Text("DH%zu: %s", i, paths::name(hds[i]).c_str());
+                ImGui::SameLine();
+                ImGui::PushID((int)i);
+                if (ImGui::SmallButton("Ajouter des fichiers…")) hdOpen(hds[i]);
+                ImGui::PopID();
+            }
             if (ImGui::Button("Ajouter des disques durs…")) addHds();
             ImGui::SameLine();
             if (ImGui::Button("Retirer les disques durs")) s.setList("hds", {});
@@ -895,6 +1043,7 @@ struct Home {
         help();
         web();
         scanDraw();
+        hdDraw();
         // Messages
         if (!alerts.empty() && !ImGui::IsPopupOpen("##alerte")) ImGui::OpenPopup("##alerte");
         ImGui::SetNextWindowSizeConstraints(ImVec2(360 * scale, 0), ImVec2(560 * scale, io.DisplaySize.y * 0.8f));

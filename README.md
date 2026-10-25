@@ -57,6 +57,11 @@ applications (Linux).
   AGS compris). Fichiers glissés sur la fenêtre : Kickstart installé, disque dur branché, disquette mise dans DF0:.
 - **Plusieurs Kickstart**, reconnus à leur contenu (somme CRC et version, 3.1.4 et 3.2 compris) : chacun sert
   automatiquement à la machine qui lui convient. Sinon, la ROM libre **AROS** fournie.
+- **Ajouter sur un disque dur** (« Ajouter des fichiers… » à côté de chaque disque dur, Amiga éteint) : jeux WHDLoad
+  `.lha` et archives `.zip` décompressés, disquettes `.adf` ouvertes (dans un dossier à leur nom, avec leur icône),
+  fichiers ou dossier entier copiés tels quels, sur la partition et dans le dossier choisis (OFS et FFS, RDB compris).
+  « Préparer le disque pour WHDLoad » copie WHDLoad dans `C:` et, dans `Devs:Kickstarts`, ses `.RTB` et vos Kickstart.
+  Compte rendu des fichiers copiés et ignorés ; si la copie échoue (place…), le disque n'est pas modifié.
 - **Scanner un dossier** (Bibliothèque) : un dossier choisi (Amiga Forever, clé USB…) est parcouru avec ses
   sous-dossiers ; Kickstart (reconnus par empreinte, ROM chiffrées d'Amiga Forever déchiffrées avec le `rom.key` du
   dossier), jeux WHDLoad, disquettes, disques durs, CD, archives `.zip` et configurations `.uae` sont reconnus par leur
