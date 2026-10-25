@@ -51,6 +51,8 @@ applications (Linux).
   image en reçoit une quand on quitte.
 - **Configurations** enregistrées sous un nom, **export et import .uae** (WinUAE, Amiberry, autres versions) ; machine,
   mémoire et processeur retenus pour chaque disque de démarrage.
+- **Version web** (en haut de l'accueil) : lien vers la [version web](https://laurent-67370.github.io/amiga1200/)
+  d'origine, et rappel du passage de l'une à l'autre par les configurations .uae.
 - **Changer de PC** : *Tout exporter…* range dans un seul `.zip` réglages, Bibliothèque, configurations, Kickstart,
   sauvegardes d'état et des jeux, disques extraits et captures ; *Importer…* sur l'autre PC (Windows ou Linux).
 - **Reprendre où j'en étais** : en fermant l'émulation, l'état est gardé ; l'accueil propose « Reprendre ».
