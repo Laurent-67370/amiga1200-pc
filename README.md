@@ -23,7 +23,7 @@ Amiga Forever compris).
 | Version | Dépôt | Pour | Particularités | Obtenir |
 |---|---|---|---|---|
 | **Web**, l'origine du projet | [amiga1200](https://github.com/laurent-67370/amiga1200) | Navigateur : ordinateur, Android, iPhone, iPad | Rien à installer, hors ligne (application PWA), deux moteurs (WinUAE 6 et PUAE) | [Ouvrir la page](https://laurent-67370.github.io/amiga1200/) |
-| **Android** | [amiga1200-android](https://github.com/laurent-67370/amiga1200-android) | Téléphones et tablettes 64 bits (Android 9 et plus) | **JIT**, manette et clavier tactiles, raccourcis sur l'écran d'accueil | [APK (Releases → dev)](https://github.com/laurent-67370/amiga1200-android/releases/tag/dev) |
+| **Android** | [amiga1200-android](https://github.com/laurent-67370/amiga1200-android) | Téléphones et tablettes 64 bits (Android 9 et plus) | **JIT**, manette et clavier tactiles, raccourcis sur l'écran d'accueil, disques d'un NAS (SMB) lus sur place | [APK (Releases → dev)](https://github.com/laurent-67370/amiga1200-android/releases/tag/dev) |
 | **Mac** | [amiga1200-mac](https://github.com/laurent-67370/amiga1200-mac) | Mac Apple Silicon (macOS 13 et plus) | **JIT**, application macOS (menus, CoreMIDI, manettes Game Controller) | [.dmg (Releases → dev)](https://github.com/laurent-67370/amiga1200-mac/releases/tag/dev) |
 | **Windows et Linux** (ce dépôt) | [amiga1200-pc](https://github.com/laurent-67370/amiga1200-pc) | PC x64 : Windows 10/11, Linux (AppImage) | Une seule base pour les deux systèmes, .zip portable et AppImage autonome (sans JIT : 68040 interprété) | [.zip et AppImage (Releases → dev)](https://github.com/laurent-67370/amiga1200-pc/releases/tag/dev) |
 
@@ -55,6 +55,8 @@ applications (Linux).
   mémoire (Chip, Slow, Fast) et carte 68030 ou 68040, **quatre lecteurs** DF0: à DF3:, **disquette vierge** formatée
   (pour les sauvegardes des jeux), CD, jusqu'à **8 disques durs** (HDF,
   AGS compris). Fichiers glissés sur la fenêtre : Kickstart installé, disque dur branché, disquette mise dans DF0:.
+  Disques d'un NAS : partage monté comme dossier ou lecteur réseau (SMB, NFS), les .hdf y sont lus et écrits sur
+  place ; connexion stable conseillée, un seul appareil à la fois sur un même disque.
 - **Plusieurs Kickstart**, reconnus à leur contenu (somme CRC et version, 3.1.4 et 3.2 compris) : chacun sert
   automatiquement à la machine qui lui convient. Sinon, la ROM libre **AROS** fournie.
 - **Ajouter sur un disque dur** (« Ajouter des fichiers… » à côté de chaque disque dur, Amiga éteint) : jeux WHDLoad
