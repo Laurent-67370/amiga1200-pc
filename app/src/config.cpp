@@ -134,13 +134,14 @@ std::string write(Settings &s, bool arosOnly, const std::string &whdHdf) {
             if (!s.fastCpu() && model == "A1200" && accel == "none") { l.push_back("cpu_model=68020"); l.push_back("cpu_24bit_addressing=false"); }
         }
         // Disques durs sur le pilote d'UAE (uaehf.device) : démarrent AGS et les Workbench préinstallés
-        for (size_t i = 0; i < hds.size() && i < 8; i++) {
+        for (size_t i = 0; i < hds.size() && i < MAX_HDS; i++) {
             bool rdb = hasRdb(hds[i]);
             log(paths::name(hds[i]) + " : " + (rdb ? "table de partitions (RDB)" : "partition seule (32 secteurs, 1 tête, 2 blocs réservés)"));
             l.push_back("hardfile2=rw,DH" + std::to_string(i) + ":" + hds[i] + "," + (rdb ? "0,0,0,512" : "32,1,2,512") + "," +
                         (i == 0 ? "0" : "-1") + ",,uae" + std::to_string(i));
         }
-        if (!hds.empty() && s.sharedVol() && !whd) l.push_back("filesystem2=rw,DH12:SHARED:" + paths::shared() + ",-128");
+        // SHARED: : nom d'unité après ceux des disques durs
+        if (!hds.empty() && s.sharedVol() && !whd) l.push_back("filesystem2=rw,DH" + std::to_string(MAX_HDS) + ":SHARED:" + paths::shared() + ",-128");
         // Jeu WHDLoad sur .hdf : vos Kickstart dans WHDCommon:Kickstarts (WHDLoad y cherche après Devs:Kickstarts)
         if (whd) { std::string w = whdCommon(); if (!w.empty()) l.push_back("filesystem2=ro,DH11:WHDCommon:" + w + ",-128"); }
         // Sans disque dur, ni ROM de démarrage ni carte d'UAE, comme la version web : toute la mémoire au jeu

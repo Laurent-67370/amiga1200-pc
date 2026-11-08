@@ -53,7 +53,7 @@ applications (Linux).
 - **Écran d'accueil** : préréglages (AGS / Workbench, A1200 d'origine, Amiga 500, CD32), machine (**A500, A600, A1200,
   A3000, A4000, CD32, CDTV**), processeur rapide, carte graphique RTG, volume SHARED:, NTSC, bruit des lecteurs,
   mémoire (Chip, Slow, Fast) et carte 68030 ou 68040, **quatre lecteurs** DF0: à DF3:, **disquette vierge** formatée
-  (pour les sauvegardes des jeux), CD, jusqu'à **8 disques durs** (HDF,
+  (pour les sauvegardes des jeux), CD, jusqu'à **16 disques durs** (HDF,
   AGS compris). Fichiers glissés sur la fenêtre : Kickstart installé, disque dur branché, disquette mise dans DF0:.
   Disques d'un NAS : partage monté comme dossier ou lecteur réseau (SMB, NFS), les .hdf y sont lus et écrits sur
   place ; connexion stable conseillée, un seul appareil à la fois sur un même disque.

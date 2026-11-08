@@ -5,6 +5,8 @@
 #include "kickstarts.h"
 
 namespace config {
+// Disques durs branchés à la fois (DH0: à DH15:)
+constexpr size_t MAX_HDS = 16;
 // Contenu à donner au cœur : une archive WHDLoad en DF0: se lance seule, sinon la configuration .uae
 std::string content(Settings &s);
 // whdHdf : jeu installé sur un .hdf qui démarre WHDLoad tout seul ; arosOnly : essai avec AROS, sans disque

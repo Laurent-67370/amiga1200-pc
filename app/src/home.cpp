@@ -140,8 +140,8 @@ struct Home {
 
     void addHds() {
         auto list = s.hds();
-        for (auto &p : platform::openFiles("Disques durs .hdf (8 au plus)", true, {"Disques durs|*.hdf;*.hdz;*.vhd"}))
-            if (std::find(list.begin(), list.end(), p) == list.end() && list.size() < 8) list.push_back(p);
+        for (auto &p : platform::openFiles("Disques durs .hdf (" + std::to_string(config::MAX_HDS) + " au plus)", true, {"Disques durs|*.hdf;*.hdz;*.vhd"}))
+            if (std::find(list.begin(), list.end(), p) == list.end() && list.size() < config::MAX_HDS) list.push_back(p);
         // Le Workbench d'AGS démarre : placé en premier
         std::stable_sort(list.begin(), list.end(), [](const std::string &a, const std::string &b) {
             auto wb = [](const std::string &x) { std::string n = paths::name(x); std::transform(n.begin(), n.end(), n.begin(), ::tolower); return n == "workbench.hdf" ? 0 : 1; };
@@ -260,7 +260,7 @@ struct Home {
                 bool on = std::find(hds.begin(), hds.end(), it.path) != hds.end();
                 if (ImGui::Button(on ? "✓ Branché" : "+ Brancher")) {
                     if (on) hds.erase(std::remove(hds.begin(), hds.end(), it.path), hds.end());
-                    else if (hds.size() < 8) { library::touch(it.path); hds.push_back(it.path); }
+                    else if (hds.size() < config::MAX_HDS) { library::touch(it.path); hds.push_back(it.path); }
                     s.setList("hds", hds);
                     if (!on) s.applyProfile();
                 }
